@@ -1,0 +1,1497 @@
+import 'dart:io';
+import 'dart:math' as math;
+import 'dart:ui' as ui;
+
+import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:liquid_glass_renderer/liquid_glass_renderer.dart' as lgr;
+
+import '../core/api.dart';
+import '../core/imaging.dart';
+import '../core/models.dart';
+import '../core/store.dart';
+import '../ui/glass.dart';
+import 'create.dart' show GenerationSettings;
+
+class EditorScreen extends StatefulWidget {
+  final AppStore store;
+  final StudioApi api;
+  final String? initialPath;
+  final VoidCallback onSettings;
+  const EditorScreen({
+    super.key,
+    required this.store,
+    required this.api,
+    this.initialPath,
+    required this.onSettings,
+  });
+  @override
+  State<EditorScreen> createState() => _EditorScreenState();
+}
+
+class _Snapshot {
+  final String path;
+  final Adjustments a;
+  _Snapshot(this.path, Adjustments adjustments) : a = adjustments.clone();
+}
+
+class _Stroke {
+  final List<Offset> points;
+  final double width;
+  final bool erase;
+  _Stroke(this.points, this.width, this.erase);
+}
+
+class _EditorScreenState extends State<EditorScreen> {
+  String? path;
+  ui.Image? image;
+  ui.FragmentShader? shader;
+  Adjustments a = Adjustments();
+  final List<_Snapshot> undo = [], redo = [];
+  int tool = 0, adjustment = 0, balanceRange = 1;
+  bool busy = false,
+      compare = false,
+      eraser = false,
+      loading = false,
+      feather = true;
+  String activity = '';
+  CancelToken? token;
+  final editPrompt = TextEditingController();
+  List<_Stroke> strokes = [];
+  double brush = .075;
+  GenerationOptions? cloudOptions;
+  Rect crop = const Rect.fromLTWH(0, 0, 1, 1);
+  int cropRatio = 0;
+  double focusX = .5, focusY = .45, focusRadius = .34, bokehStrength = .5;
+  @override
+  void initState() {
+    super.initState();
+    initialize();
+  }
+
+  Future<void> initialize() async {
+    try {
+      shader = (await ui.FragmentProgram.fromAsset('shaders/adjustments.frag'))
+          .fragmentShader();
+    } catch (e) {
+      if (mounted) {
+        toast(context, '实时调色着色器加载失败：$e');
+      }
+    }
+    if (widget.initialPath != null) {
+      await load(widget.initialPath!);
+    }
+    if (Platform.isAndroid) {
+      try {
+        final lost = await ImagePicker().retrieveLostData();
+        if (!lost.isEmpty && lost.files?.isNotEmpty == true && mounted) {
+          await load(lost.files!.first.path);
+        }
+      } catch (_) {
+        /* The next manual import can recover from picker interruption. */
+      }
+    }
+  }
+
+  Future<void> load(String value, {bool reset = true}) async {
+    if (mounted) {
+      setState(() => loading = true);
+    }
+    try {
+      final codec = await ui.instantiateImageCodec(
+        await File(value).readAsBytes(),
+      );
+      final frame = await codec.getNextFrame();
+      codec.dispose();
+      if (!mounted) {
+        frame.image.dispose();
+        return;
+      }
+      final old = image;
+      setState(() {
+        path = value;
+        image = frame.image;
+        if (reset) {
+          a = Adjustments();
+          undo.clear();
+          redo.clear();
+          strokes = [];
+          crop = const Rect.fromLTWH(0, 0, 1, 1);
+        }
+      });
+      WidgetsBinding.instance.addPostFrameCallback((_) => old?.dispose());
+    } catch (e) {
+      if (mounted) {
+        toast(context, '无法读取图片：$e');
+      }
+    } finally {
+      if (mounted) {
+        setState(() => loading = false);
+      }
+    }
+  }
+
+  Future<void> pick() async {
+    if (busy) {
+      return;
+    }
+    try {
+      final file = await ImagePicker().pickImage(source: ImageSource.gallery);
+      if (file != null) {
+        await load(file.path);
+      }
+    } catch (e) {
+      if (mounted) {
+        toast(context, '无法打开图片：$e');
+      }
+    }
+  }
+
+  void remember() {
+    if (path == null) {
+      return;
+    }
+    undo.add(_Snapshot(path!, a));
+    if (undo.length > 35) {
+      undo.removeAt(0);
+    }
+    redo.clear();
+  }
+
+  Future<void> restore(bool forward) async {
+    final from = forward ? redo : undo, to = forward ? undo : redo;
+    if (from.isEmpty || busy) {
+      return;
+    }
+    final snapshot = from.removeLast();
+    to.add(_Snapshot(path!, a));
+    if (path != snapshot.path) {
+      await load(snapshot.path, reset: false);
+    }
+    if (mounted) {
+      setState(() {
+        a = snapshot.a.clone();
+        strokes = [];
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    token?.cancel();
+    image?.dispose();
+    shader?.dispose();
+    editPrompt.dispose();
+    super.dispose();
+  }
+
+  Future<void> export() async {
+    if (path == null || busy) {
+      return;
+    }
+    final choice = await glassSheet<Map<String, dynamic>>(
+      context,
+      const ExportSheet(),
+    );
+    if (choice == null || !mounted) {
+      return;
+    }
+    setState(() {
+      busy = true;
+      activity = '正在导出原始分辨率…';
+    });
+    try {
+      final result = await renderEdited(
+        path!,
+        a,
+        format: choice['format'],
+        quality: choice['quality'],
+      );
+      final art = await saveArtwork(
+        widget.store,
+        result['bytes'],
+        prompt: '本地修图 · 调色与影调',
+        model: '本地处理',
+        kind: '修图',
+      );
+      if (choice['gallery'] == true) {
+        await saveToGallery(art.path);
+      }
+      if (mounted) {
+        toast(context, choice['gallery'] == true ? '已保存到作品和系统相册' : '已保存到作品');
+      }
+    } catch (e) {
+      if (mounted) {
+        toast(context, describeError(e));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => busy = false);
+      }
+    }
+  }
+
+  Future<void> geometry({
+    int rotation = 0,
+    bool flip = false,
+    bool applyCrop = false,
+  }) async {
+    if (path == null || busy) {
+      return;
+    }
+    setState(() {
+      busy = true;
+      activity = '正在处理构图…';
+    });
+    try {
+      final result = await renderEdited(
+        path!,
+        a,
+        rotation: rotation,
+        flip: flip,
+        crop: applyCrop ? [crop.left, crop.top, crop.width, crop.height] : null,
+      );
+      final next = await widget.store.writeImage(result['bytes'], 'png');
+      remember();
+      await load(next, reset: false);
+      if (mounted) {
+        setState(() {
+          a = Adjustments();
+          crop = const Rect.fromLTWH(0, 0, 1, 1);
+          cropRatio = 0;
+          strokes = [];
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        toast(context, describeError(e));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => busy = false);
+      }
+    }
+  }
+
+  Future<Uint8List> maskBytes() async {
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    canvas.drawColor(Colors.white, BlendMode.src);
+    for (final s in strokes) {
+      final paint = Paint()
+        ..color = Colors.white
+        ..blendMode = s.erase ? BlendMode.srcOver : BlendMode.clear
+        ..style = PaintingStyle.stroke
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round
+        ..strokeWidth = s.width * image!.width;
+      if (feather) {
+        paint.maskFilter = MaskFilter.blur(
+          BlurStyle.normal,
+          math.max(1, s.width * image!.width * .08),
+        );
+      }
+      final p = Path()
+        ..moveTo(
+          s.points.first.dx * image!.width,
+          s.points.first.dy * image!.height,
+        );
+      if (s.points.length == 1) {
+        p.lineTo(
+          s.points.first.dx * image!.width + .01,
+          s.points.first.dy * image!.height,
+        );
+      }
+      for (final point in s.points.skip(1)) {
+        p.lineTo(point.dx * image!.width, point.dy * image!.height);
+      }
+      canvas.drawPath(p, paint);
+    }
+    final picture = recorder.endRecording();
+    final mask = await picture.toImage(image!.width, image!.height);
+    picture.dispose();
+    final rgba = (await mask.toByteData(format: ui.ImageByteFormat.rawRgba))!
+        .buffer
+        .asUint8List();
+    var selected = false;
+    for (var i = 3; i < rgba.length; i += 4) {
+      if (rgba[i] < 250) {
+        selected = true;
+        break;
+      }
+    }
+    if (!selected) {
+      mask.dispose();
+      throw StudioException('当前没有有效选区，请重新涂抹');
+    }
+    final bytes = (await mask.toByteData(format: ui.ImageByteFormat.png))!
+        .buffer
+        .asUint8List();
+    mask.dispose();
+    return bytes;
+  }
+
+  Future<void> cloudEdit({bool lens = false}) async {
+    if (path == null || busy) {
+      return;
+    }
+    if (!widget.store.imageApi.ready) {
+      widget.onSettings();
+      return;
+    }
+    if (!lens && !strokes.any((s) => !s.erase)) {
+      toast(context, '先涂抹需要修改的区域');
+      return;
+    }
+    if (!lens && editPrompt.text.trim().isEmpty) {
+      toast(context, '请描述选区需要怎样修改');
+      return;
+    }
+    final model = widget.store.imageApi.model;
+    setState(() {
+      busy = true;
+      activity = lens ? '正在分析光影与空间层次…' : '正在重新生成选区…';
+    });
+    token = CancelToken();
+    try {
+      final normalized = await renderEdited(path!, a);
+      final source = await widget.store.writeImage(normalized['bytes'], 'png');
+      final mask = lens ? null : await maskBytes();
+      final instruction = lens
+          ? '$lensPrompt\n影调风格：自然电影感，细腻层次，克制的色彩。'
+          : '${editPrompt.text}\n\n仅修改蒙版透明区域。保持其余区域的主体、人物身份、构图与光照，不添加额外元素。';
+      final response = await widget.api.generate(
+        prompt: instruction,
+        options: GenerationOptions(
+          width: cloudOptions?.width ?? normalized['width'],
+          height: cloudOptions?.height ?? normalized['height'],
+          count: 1,
+          quality: cloudOptions?.quality ?? 'high',
+          format: 'png',
+          moderation:
+              cloudOptions?.moderation ?? widget.store.defaults.moderation,
+        ),
+        inputs: [source],
+        mask: mask,
+        cancelToken: token,
+        operation: lens ? '云端景深增强' : '局部修图',
+      );
+      Uint8List result = response.images.first;
+      if (mask != null) {
+        result = await compute(compositeMasked, {
+          'original': normalized['bytes'],
+          'generated': result,
+          'mask': mask,
+        });
+      }
+      final art = await saveArtwork(
+        widget.store,
+        result,
+        prompt: instruction,
+        model: model,
+        kind: lens ? '景深增强' : '局部修图',
+      );
+      remember();
+      await load(art.path, reset: false);
+      if (mounted) {
+        setState(() {
+          a = Adjustments();
+          strokes = [];
+        });
+        toast(context, '已完成并保存到作品，可撤销返回原图');
+      }
+    } catch (e) {
+      if (mounted) {
+        toast(context, describeError(e));
+      }
+    } finally {
+      token = null;
+      if (mounted) {
+        setState(() => busy = false);
+      }
+    }
+  }
+
+  Future<void> applyBokeh() async {
+    if (path == null || busy) {
+      return;
+    }
+    setState(() {
+      busy = true;
+      activity = '正在柔化离焦区域…';
+    });
+    try {
+      final normalized = await renderEdited(path!, a);
+      final bytes = await compute(localBokeh, {
+        'bytes': normalized['bytes'],
+        'strength': bokehStrength,
+        'x': focusX,
+        'y': focusY,
+        'radius': focusRadius,
+      });
+      final next = await widget.store.writeImage(bytes, 'png');
+      remember();
+      await load(next, reset: false);
+      if (mounted) {
+        setState(() => a = Adjustments());
+      }
+    } catch (e) {
+      if (mounted) {
+        toast(context, describeError(e));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => busy = false);
+      }
+    }
+  }
+
+  void ratio(int i) {
+    final ratios = [
+      image!.width / image!.height,
+      1.0,
+      4 / 3,
+      3 / 2,
+      16 / 9,
+      9 / 16,
+    ];
+    final desired = ratios[i], original = image!.width / image!.height;
+    final w = desired > original ? 1.0 : desired / original,
+        h = desired > original ? original / desired : 1.0;
+    setState(() {
+      cropRatio = i;
+      crop = Rect.fromLTWH((1 - w) / 2, (1 - h) / 2, w, h);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final header = PageHeader(
+      title: '修图',
+      action: GlassIcon(
+        Icons.add_photo_alternate_outlined,
+        tooltip: '导入图片',
+        onTap: pick,
+      ),
+    );
+    if (image == null) {
+      return ListView(
+        padding: const EdgeInsets.fromLTRB(24, 0, 24, 112),
+        children: [
+          header,
+          EmptyState(
+            icon: Icons.tune_rounded,
+            title: '导入照片',
+            subtitle: '实时调色 · 局部修图 · 光学景深\n每一处修改，都保留撤销的余地。',
+            action: Column(
+              children: [
+                GlassButton(
+                  '从相册导入',
+                  primary: true,
+                  icon: Icons.add_rounded,
+                  onTap: pick,
+                ),
+                const SizedBox(height: 14),
+                GlassButton(
+                  '传奇二瞬 · 景深增强',
+                  icon: Icons.auto_awesome_rounded,
+                  onTap: () {
+                    setState(() => tool = 4);
+                    pick();
+                  },
+                ),
+                const SizedBox(height: 14),
+                GlassButton(
+                  '用示例照片体验',
+                  small: true,
+                  onTap: () async {
+                    await load(await widget.store.demoImage());
+                  },
+                ),
+              ],
+            ),
+          ),
+          if (loading) const Center(child: CircularProgressIndicator()),
+        ],
+      );
+    }
+    return LayoutBuilder(
+      builder: (context, bounds) => Column(
+        children: [
+          if (bounds.maxHeight > 450)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: header,
+            ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: photoPreview((bounds.maxHeight * .28).clamp(90.0, 248.0)),
+          ),
+          const SizedBox(height: 12),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: Row(
+              children: [
+                GlassIcon(
+                  Icons.undo_rounded,
+                  tooltip: '撤销',
+                  onTap: () => restore(false),
+                ),
+                const SizedBox(width: 8),
+                GlassIcon(
+                  Icons.redo_rounded,
+                  tooltip: '重做',
+                  onTap: () => restore(true),
+                ),
+                const Spacer(),
+                GlassButton(
+                  '导出',
+                  primary: true,
+                  small: true,
+                  icon: Icons.ios_share_rounded,
+                  onTap: busy ? null : export,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: Row(
+              children: [
+                for (final i in [4, 0, 1, 2, 3])
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 3),
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: busy ? null : () => setState(() => tool = i),
+                        child: Glass(
+                          radius: 18,
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          tint: tool == i ? accent(context) : null,
+                          opacity: tool == i ? .65 : null,
+                          child: Column(
+                            children: [
+                              Icon(
+                                [
+                                  Icons.tune_rounded,
+                                  Icons.palette_outlined,
+                                  Icons.crop_rounded,
+                                  Icons.brush_outlined,
+                                  Icons.auto_awesome_rounded,
+                                ][i],
+                                size: 22,
+                                color: tool == i
+                                    ? primaryOn(context)
+                                    : ink(context),
+                              ),
+                              const SizedBox(height: 5),
+                              Text(
+                                ['调色', '色彩平衡', '裁切', '局部修图', '传奇二瞬'][i],
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: tool == i
+                                      ? primaryOn(context)
+                                      : ink(context),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          Expanded(
+            child: ClipRect(
+              child: lgr.LiquidGlassLayer(
+                settings: glassSettings(context),
+                child: ListView(
+                  padding: const EdgeInsets.fromLTRB(24, 0, 24, 112),
+                  children: [
+                    if (busy)
+                      Glass(
+                        child: Column(
+                          children: [
+                            const LinearProgressIndicator(minHeight: 2),
+                            const SizedBox(height: 12),
+                            Text(
+                              activity,
+                              style: const TextStyle(fontSize: 14),
+                            ),
+                            if (token != null)
+                              GlassButton(
+                                '取消云端请求',
+                                small: true,
+                                onTap: () => token?.cancel(),
+                              ),
+                          ],
+                        ),
+                      ),
+                    IgnorePointer(
+                      ignoring: busy,
+                      child: switch (tool) {
+                        0 => adjustmentControls(),
+                        1 => balanceControls(),
+                        2 => cropControls(),
+                        3 => maskControls(),
+                        _ => lensControls(),
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      '修改以副本保存，原图保留。',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 12, color: muted(context)),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget photoPreview(double height) => SizedBox(
+    key: const Key('editor-preview'),
+    height: height,
+    child: Glass(
+      padding: const EdgeInsets.all(7),
+      radius: 28,
+      child: Column(
+        children: [
+          Expanded(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(22),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final ratio = image!.width / image!.height,
+                      h = math.min(
+                        constraints.maxHeight,
+                        constraints.maxWidth / ratio,
+                      ),
+                      w = h * ratio;
+                  return Center(
+                    child: SizedBox(
+                      width: w,
+                      height: h,
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTapDown: tool == 4 && !busy
+                            ? (d) => setState(() {
+                                focusX = (d.localPosition.dx / w).clamp(0, 1);
+                                focusY = (d.localPosition.dy / h).clamp(0, 1);
+                              })
+                            : null,
+                        onPanStart: busy
+                            ? null
+                            : (d) {
+                                if (tool == 3) {
+                                  setState(
+                                    () => strokes.add(
+                                      _Stroke(
+                                        [
+                                          Offset(
+                                            (d.localPosition.dx / w).clamp(
+                                              0,
+                                              1,
+                                            ),
+                                            (d.localPosition.dy / h).clamp(
+                                              0,
+                                              1,
+                                            ),
+                                          ),
+                                        ],
+                                        brush,
+                                        eraser,
+                                      ),
+                                    ),
+                                  );
+                                }
+                              },
+                        onPanUpdate: busy
+                            ? null
+                            : (d) => setState(() {
+                                if (tool == 3 && strokes.isNotEmpty) {
+                                  strokes.last.points.add(
+                                    Offset(
+                                      (d.localPosition.dx / w).clamp(0, 1),
+                                      (d.localPosition.dy / h).clamp(0, 1),
+                                    ),
+                                  );
+                                }
+                                if (tool == 2) {
+                                  crop = Rect.fromLTWH(
+                                    (crop.left + d.delta.dx / w).clamp(
+                                      0,
+                                      1 - crop.width,
+                                    ),
+                                    (crop.top + d.delta.dy / h).clamp(
+                                      0,
+                                      1 - crop.height,
+                                    ),
+                                    crop.width,
+                                    crop.height,
+                                  );
+                                }
+                                if (tool == 4) {
+                                  focusX = (d.localPosition.dx / w).clamp(0, 1);
+                                  focusY = (d.localPosition.dy / h).clamp(0, 1);
+                                }
+                              }),
+                        child: CustomPaint(
+                          size: Size(w, h),
+                          painter: _PhotoPainter(
+                            image!,
+                            compare ? Adjustments() : a,
+                            shader,
+                          ),
+                          foregroundPainter: _OverlayPainter(
+                            tool,
+                            strokes,
+                            crop,
+                            Offset(focusX, focusY),
+                            focusRadius,
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 12, 8, 7),
+            child: Row(
+              children: [
+                Text(
+                  '${image!.width} × ${image!.height}',
+                  style: TextStyle(color: muted(context), fontSize: 12),
+                ),
+                const Spacer(),
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTapDown: (_) => setState(() => compare = true),
+                  onTapUp: (_) => setState(() => compare = false),
+                  onTapCancel: () => setState(() => compare = false),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.compare_rounded,
+                        size: 15,
+                        color: muted(context),
+                      ),
+                      const SizedBox(width: 5),
+                      Text(
+                        compare ? '原图' : '按住对比',
+                        style: TextStyle(fontSize: 12, color: muted(context)),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+
+  Widget adjustmentControls() => Column(
+    children: [
+      Glass(
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Text(
+                  adjustmentNames[adjustment],
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const Spacer(),
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () {
+                    remember();
+                    setState(() => a.values[adjustment] = 0);
+                  },
+                  child: Text(
+                    '重置',
+                    style: TextStyle(fontSize: 12, color: muted(context)),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            GlassSlider(
+              value: a.values[adjustment],
+              min: adjustment >= 11 ? 0 : -1,
+              label: '调整强度',
+              onChangeStart: (_) => remember(),
+              onChanged: (v) => setState(() => a.values[adjustment] = v),
+            ),
+            const SizedBox(height: 13),
+            SizedBox(
+              height: 90,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: adjustmentNames.length,
+                separatorBuilder: (_, _) => const SizedBox(width: 11),
+                itemBuilder: (_, i) => GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => setState(() => adjustment = i),
+                  child: SizedBox(
+                    width: 57,
+                    child: Column(
+                      children: [
+                        Glass(
+                          radius: 99,
+                          padding: const EdgeInsets.all(15),
+                          tint: i == adjustment ? accent(context) : null,
+                          child: Icon(
+                            _adjustIcon(i),
+                            size: 22,
+                            color: i == adjustment
+                                ? primaryOn(context)
+                                : muted(context),
+                          ),
+                        ),
+                        const SizedBox(height: 9),
+                        Text(
+                          adjustmentNames[i],
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: i == adjustment
+                                ? accentInk(context)
+                                : muted(context),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+      const SectionLabel('影调预设', caption: '从一种感觉开始'),
+      Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          for (final name in ['原生', '通透', '胶片', '电影', '黑白', '暖阳'])
+            GlassButton(
+              name,
+              small: true,
+              onTap: () {
+                remember();
+                setState(() => a = _preset(name));
+              },
+            ),
+        ],
+      ),
+    ],
+  );
+
+  Widget balanceControls() => Glass(
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text(
+          '色彩平衡',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 16),
+        GlassSegments(
+          labels: const ['阴影', '中间调', '高光'],
+          selected: balanceRange,
+          onChanged: (v) => setState(() => balanceRange = v),
+        ),
+        const SizedBox(height: 24),
+        for (var c = 0; c < 3; c++) ...[
+          GlassSlider(
+            value: a.balance[balanceRange * 3 + c],
+            semanticLabel: ['青色到红色', '洋红到绿色', '黄色到蓝色'][c],
+            leftColor: [Colors.cyan, Colors.purpleAccent, Colors.yellow][c],
+            rightColor: [Colors.red, Colors.green, Colors.blue][c],
+            onChangeStart: (_) => remember(),
+            onChanged: (v) =>
+                setState(() => a.balance[balanceRange * 3 + c] = v),
+          ),
+          const SizedBox(height: 22),
+        ],
+        Row(
+          children: [
+            GlassCheckbox(
+              value: a.preserveLuminosity,
+              onChanged: (v) {
+                remember();
+                setState(() => a.preserveLuminosity = v ?? true);
+              },
+              activeColor: accentInk(context),
+            ),
+            const Text('保持明度', style: TextStyle(fontSize: 14)),
+            const Spacer(),
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () {
+                remember();
+                setState(() => a.balance = List.filled(9, 0));
+              },
+              child: Text(
+                '重置',
+                style: TextStyle(fontSize: 12, color: muted(context)),
+              ),
+            ),
+          ],
+        ),
+        Text(
+          '独立调整三段明暗的色彩。保持明度可保护颜色调整前的 HSL 亮度。',
+          style: TextStyle(fontSize: 12, height: 1.7, color: muted(context)),
+        ),
+      ],
+    ),
+  );
+
+  Widget cropControls() => Glass(
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text(
+          '裁切与旋转',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 16),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (var i = 0; i < 6; i++)
+              GlassButton(
+                ['原图', '1:1', '4:3', '3:2', '16:9', '9:16'][i],
+                small: true,
+                primary: cropRatio == i,
+                onTap: () => ratio(i),
+              ),
+          ],
+        ),
+        const SizedBox(height: 20),
+        GlassSlider(
+          label: '裁切宽度',
+          min: .1,
+          max: 1,
+          value: crop.width,
+          onChanged: (v) => setState(
+            () => crop = Rect.fromLTWH(
+              crop.left.clamp(0, 1 - v),
+              crop.top,
+              v,
+              crop.height,
+            ),
+          ),
+        ),
+        GlassSlider(
+          label: '裁切高度',
+          min: .1,
+          max: 1,
+          value: crop.height,
+          onChanged: (v) => setState(
+            () => crop = Rect.fromLTWH(
+              crop.left,
+              crop.top.clamp(0, 1 - v),
+              crop.width,
+              v,
+            ),
+          ),
+        ),
+        Text(
+          '在图片上拖动取景框。',
+          style: TextStyle(fontSize: 12, color: muted(context)),
+        ),
+        const SizedBox(height: 18),
+        Row(
+          children: [
+            Expanded(
+              child: GlassButton(
+                '旋转 90°',
+                small: true,
+                icon: Icons.rotate_right_rounded,
+                onTap: () => geometry(rotation: 90),
+              ),
+            ),
+            const SizedBox(width: 9),
+            Expanded(
+              child: GlassButton(
+                '水平翻转',
+                small: true,
+                icon: Icons.flip_rounded,
+                onTap: () => geometry(flip: true),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        GlassButton(
+          '应用裁切',
+          primary: true,
+          onTap: () => geometry(applyCrop: true),
+        ),
+      ],
+    ),
+  );
+
+  Widget cloudSpecifications() => Padding(
+    padding: const EdgeInsets.only(top: 12),
+    child: GlassButton(
+      cloudOptions == null
+          ? '云端输出规格 · 跟随原图'
+          : '云端输出 · ${cloudOptions!.displaySize}',
+      small: true,
+      icon: Icons.aspect_ratio_rounded,
+      onTap: () async {
+        final selected = await glassSheet<GenerationOptions>(
+          context,
+          GenerationSettings(initial: cloudOptions ?? GenerationOptions()),
+        );
+        if (selected != null && mounted) {
+          setState(() => cloudOptions = selected);
+        }
+      },
+    ),
+  );
+
+  Widget maskControls() => Glass(
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text(
+          '局部重绘',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 10),
+        Text(
+          '涂抹画面中的修改区域。生成后仅合成选区，区域外像素保留。',
+          style: TextStyle(fontSize: 14, height: 1.7, color: muted(context)),
+        ),
+        const SizedBox(height: 17),
+        Row(
+          children: [
+            Expanded(
+              child: GlassButton(
+                eraser ? '橡皮擦' : '画笔',
+                small: true,
+                icon: eraser
+                    ? Icons.auto_fix_normal_rounded
+                    : Icons.brush_outlined,
+                onTap: () => setState(() => eraser = !eraser),
+              ),
+            ),
+            const SizedBox(width: 8),
+            GlassButton(
+              '撤笔',
+              small: true,
+              onTap: () => setState(() {
+                if (strokes.isNotEmpty) {
+                  strokes.removeLast();
+                }
+              }),
+            ),
+            const SizedBox(width: 8),
+            GlassButton(
+              '清空',
+              small: true,
+              onTap: () => setState(() => strokes = []),
+            ),
+          ],
+        ),
+        const SizedBox(height: 18),
+        GlassSlider(
+          value: brush,
+          label: '画笔大小',
+          min: .01,
+          max: .25,
+          onChanged: (v) => setState(() => brush = v),
+        ),
+        Row(
+          children: [
+            GlassCheckbox(
+              value: feather,
+              onChanged: (v) => setState(() => feather = v ?? true),
+            ),
+            const Text('柔化选区边缘', style: TextStyle(fontSize: 14)),
+          ],
+        ),
+        const SizedBox(height: 9),
+        Wrap(
+          spacing: 7,
+          runSpacing: 7,
+          children: [
+            for (final type in ['换装', '换天气', '消除', '修复'])
+              GlassButton(
+                type,
+                small: true,
+                onTap: () {
+                  editPrompt.text = switch (type) {
+                    '换装' => '将选区内的服装替换为黑色剪裁合身的西装，保持人物身份、体态与姿势，匹配原图光照。',
+                    '换天气' => '将选区中的天空变为晴朗蓝天与自然云层，匹配画面光照和透视。',
+                    '消除' => '自然移除选区中的对象，依据周围纹理、透视与光照无痕修复背景。',
+                    _ => '修复选区的瑕疵与破损，恢复自然纹理、细节与光照。',
+                  };
+                },
+              ),
+          ],
+        ),
+        const SizedBox(height: 15),
+        GlassField(
+          controller: editPrompt,
+          hint: '描述选区如何变化…',
+          minLines: 3,
+          maxLines: 6,
+        ),
+        const SizedBox(height: 18),
+        GlassButton(
+          '重新生成选区',
+          primary: true,
+          icon: Icons.auto_awesome_rounded,
+          onTap: () => cloudEdit(),
+        ),
+        cloudSpecifications(),
+        const SizedBox(height: 12),
+        Text(
+          '需要服务端支持 Images 编辑接口和透明 PNG 蒙版。',
+          style: TextStyle(fontSize: 12, height: 1.7, color: muted(context)),
+        ),
+      ],
+    ),
+  );
+
+  Widget lensControls() => Glass(
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text(
+          '传奇二瞬 · 景深增强',
+          style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 13),
+        const SectionLabel('云端光学景深', caption: '大模型影像增强'),
+        Text(
+          '将原分辨率 PNG 副本发送到你配置的生图模型，请求空间层次推断、自然焦外过渡和电影影调。结果取决于模型能力，可撤销并与原图对比。',
+          style: TextStyle(fontSize: 14, color: muted(context), height: 1.8),
+        ),
+        const SizedBox(height: 18),
+        GlassButton(
+          '开启传奇二瞬',
+          primary: true,
+          icon: Icons.auto_awesome_rounded,
+          onTap: () => cloudEdit(lens: true),
+        ),
+        cloudSpecifications(),
+        const SizedBox(height: 13),
+        Text(
+          '独立实现的影像工作流，不包含小米或徕卡专有算法；模型处理无法保证像素无损。',
+          style: TextStyle(fontSize: 12, height: 1.8, color: muted(context)),
+        ),
+        const SizedBox(height: 24),
+        Text(
+          '本地焦点虚化',
+          style: TextStyle(
+            fontSize: 14,
+            color: accentInk(context),
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 7),
+        Text(
+          '点击图片选择焦点。以渐进虚化模拟浅景深，适合手动调整；此模式不使用深度模型。',
+          style: TextStyle(fontSize: 12, color: muted(context), height: 1.7),
+        ),
+        const SizedBox(height: 16),
+        GlassSlider(
+          value: focusRadius,
+          min: .08,
+          max: .65,
+          label: '清晰范围',
+          onChanged: (v) => setState(() => focusRadius = v),
+        ),
+        GlassSlider(
+          value: bokehStrength,
+          min: .05,
+          max: 1,
+          label: '虚化强度',
+          onChanged: (v) => setState(() => bokehStrength = v),
+        ),
+        GlassButton(
+          '应用本地虚化',
+          small: true,
+          icon: Icons.blur_circular_rounded,
+          onTap: applyBokeh,
+        ),
+      ],
+    ),
+  );
+}
+
+class _PhotoPainter extends CustomPainter {
+  final ui.Image image;
+  final Adjustments a;
+  final ui.FragmentShader? shader;
+  _PhotoPainter(this.image, Adjustments adjustments, this.shader)
+    : a = adjustments.clone();
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (shader == null || a.isEmpty) {
+      canvas.drawImageRect(
+        image,
+        Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()),
+        Offset.zero & size,
+        Paint(),
+      );
+      return;
+    }
+    shader!
+      ..setFloat(0, size.width)
+      ..setFloat(1, size.height)
+      ..setFloat(2, image.width.toDouble())
+      ..setFloat(3, image.height.toDouble());
+    for (var i = 0; i < 14; i++) {
+      shader!.setFloat(4 + i, a.values[i]);
+    }
+    for (var i = 0; i < 9; i++) {
+      shader!.setFloat(18 + i, a.balance[i]);
+    }
+    shader!
+      ..setFloat(27, a.preserveLuminosity ? 1 : 0)
+      ..setImageSampler(0, image);
+    canvas.drawRect(Offset.zero & size, Paint()..shader = shader);
+  }
+
+  @override
+  bool shouldRepaint(_PhotoPainter old) =>
+      image != old.image ||
+      shader != old.shader ||
+      !listEquals(a.values, old.a.values) ||
+      !listEquals(a.balance, old.a.balance) ||
+      a.preserveLuminosity != old.a.preserveLuminosity;
+}
+
+class _OverlayPainter extends CustomPainter {
+  final int tool;
+  final List<_Stroke> strokes;
+  final Rect crop;
+  final Offset focus;
+  final double radius;
+  _OverlayPainter(this.tool, this.strokes, this.crop, this.focus, this.radius);
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (tool == 3) {
+      canvas.saveLayer(Offset.zero & size, Paint());
+      for (final s in strokes) {
+        final p = Path()
+          ..moveTo(
+            s.points.first.dx * size.width,
+            s.points.first.dy * size.height,
+          );
+        if (s.points.length == 1) {
+          p.lineTo(
+            s.points.first.dx * size.width + .01,
+            s.points.first.dy * size.height,
+          );
+        }
+        for (final point in s.points.skip(1)) {
+          p.lineTo(point.dx * size.width, point.dy * size.height);
+        }
+        canvas.drawPath(
+          p,
+          Paint()
+            ..color = const Color(0x8cb4f8bf)
+            ..blendMode = s.erase ? BlendMode.clear : BlendMode.srcOver
+            ..strokeWidth = s.width * size.width
+            ..strokeCap = StrokeCap.round
+            ..strokeJoin = StrokeJoin.round
+            ..style = PaintingStyle.stroke,
+        );
+      }
+      canvas.restore();
+    }
+    if (tool == 2) {
+      final rect = Rect.fromLTWH(
+        crop.left * size.width,
+        crop.top * size.height,
+        crop.width * size.width,
+        crop.height * size.height,
+      );
+      final outside = Path()
+        ..addRect(Offset.zero & size)
+        ..addRect(rect)
+        ..fillType = PathFillType.evenOdd;
+      canvas.drawPath(outside, Paint()..color = Colors.black54);
+      canvas.drawRect(
+        rect,
+        Paint()
+          ..color = Colors.white
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.5,
+      );
+      for (var i = 1; i < 3; i++) {
+        canvas.drawLine(
+          Offset(rect.left + rect.width * i / 3, rect.top),
+          Offset(rect.left + rect.width * i / 3, rect.bottom),
+          Paint()..color = Colors.white38,
+        );
+        canvas.drawLine(
+          Offset(rect.left, rect.top + rect.height * i / 3),
+          Offset(rect.right, rect.top + rect.height * i / 3),
+          Paint()..color = Colors.white38,
+        );
+      }
+    }
+    if (tool == 4) {
+      final center = Offset(focus.dx * size.width, focus.dy * size.height);
+      canvas.drawCircle(
+        center,
+        radius * math.max(size.width, size.height),
+        Paint()
+          ..color = Colors.white54
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1,
+      );
+      canvas.drawCircle(center, 5, Paint()..color = const Color(0xffc3efbc));
+    }
+  }
+
+  @override
+  bool shouldRepaint(_OverlayPainter old) => true;
+}
+
+class ExportSheet extends StatefulWidget {
+  const ExportSheet({super.key});
+  @override
+  State<ExportSheet> createState() => _ExportSheetState();
+}
+
+class _ExportSheetState extends State<ExportSheet> {
+  int format = 0, quality = 92;
+  bool gallery = true;
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      const Text(
+        '导出',
+        style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
+      ),
+      const SectionLabel('导出格式'),
+      GlassSegments(
+        labels: const ['PNG', 'JPEG', 'WebP', 'GIF'],
+        selected: format,
+        onChanged: (v) => setState(() => format = v),
+      ),
+      if (format == 1 || format == 2) ...[
+        const SizedBox(height: 25),
+        GlassSlider(
+          value: quality / 100,
+          min: .1,
+          max: 1,
+          label: '压缩质量',
+          onChanged: (v) => setState(() => quality = (v * 100).round()),
+        ),
+      ],
+      const SizedBox(height: 16),
+      Row(
+        children: [
+          GlassCheckbox(
+            value: gallery,
+            onChanged: (v) => setState(() => gallery = v ?? true),
+          ),
+          const Expanded(
+            child: Text('同时保存到系统相册', style: TextStyle(fontSize: 14)),
+          ),
+        ],
+      ),
+      const SizedBox(height: 12),
+      Text(
+        format == 3 ? '单张照片导出为静态 GIF。多帧动画可在作品页制作。' : '保留当前图片原始分辨率，保存为新副本。',
+        style: TextStyle(fontSize: 12, color: muted(context), height: 1.8),
+      ),
+      const SizedBox(height: 25),
+      GlassButton(
+        '保存作品',
+        primary: true,
+        icon: Icons.download_rounded,
+        onTap: () => Navigator.pop(context, {
+          'format': ['png', 'jpeg', 'webp', 'gif'][format],
+          'quality': quality,
+          'gallery': gallery,
+        }),
+      ),
+    ],
+  );
+}
+
+IconData _adjustIcon(int i) => [
+  Icons.exposure_rounded,
+  Icons.wb_sunny_outlined,
+  Icons.highlight_rounded,
+  Icons.tonality_rounded,
+  Icons.contrast_rounded,
+  Icons.brightness_6_outlined,
+  Icons.circle_outlined,
+  Icons.palette_outlined,
+  Icons.color_lens_outlined,
+  Icons.thermostat_rounded,
+  Icons.water_drop_outlined,
+  Icons.details_rounded,
+  Icons.vignette_rounded,
+  Icons.grain_rounded,
+][i];
+Adjustments _preset(String name) {
+  final a = Adjustments();
+  switch (name) {
+    case '通透':
+      a.values[0] = .12;
+      a.values[1] = .25;
+      a.values[2] = -.2;
+      a.values[3] = .2;
+      a.values[8] = .2;
+    case '胶片':
+      a.values[4] = -.16;
+      a.values[6] = -.15;
+      a.values[7] = -.12;
+      a.values[9] = .17;
+      a.values[13] = .3;
+      a.balance[2] = .15;
+      a.balance[6] = .12;
+    case '电影':
+      a.values[4] = .16;
+      a.values[2] = -.2;
+      a.values[7] = -.15;
+      a.values[12] = .3;
+      a.balance[1] = .1;
+      a.balance[2] = .17;
+      a.balance[6] = .2;
+    case '黑白':
+      a.values[7] = -1;
+      a.values[4] = .16;
+      a.values[12] = .2;
+    case '暖阳':
+      a.values[9] = .35;
+      a.values[0] = .08;
+      a.values[3] = .12;
+      a.values[8] = .15;
+  }
+  return a;
+}
