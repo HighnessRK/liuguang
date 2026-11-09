@@ -359,7 +359,11 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
             child: GlassButton(
               '清空',
               onTap: () async {
-                if (!await confirm(context, '清空诊断日志？', '只清空本机诊断事件，不影响作品和使用明细。')) {
+                if (!await confirm(
+                  context,
+                  '清空诊断日志？',
+                  '只清空本机诊断事件，不影响作品和使用明细。',
+                )) {
                   return;
                 }
                 await AppLog.clear();

@@ -1,3 +1,5 @@
+import 'package:flutter_miuix/miuix.dart' as mx;
+
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -86,6 +88,13 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('显示模式'), findsOneWidget);
       expect(find.text('主题色'), findsOneWidget);
+      final track = find
+          .descendant(
+            of: find.byType(mx.MiuixSlider).first,
+            matching: find.byType(CustomPaint),
+          )
+          .first;
+      expect(tester.getSize(track).width, greaterThan(200));
       expect(tester.takeException(), isNull);
     },
   );

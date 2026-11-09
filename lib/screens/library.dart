@@ -79,7 +79,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   selected: filter,
                   onChanged: (i) => setState(() => filter = i),
                 ),
-                SectionLabel('${items.length} 件作品', caption: '长按删除'),
+                SectionLabel('${items.length} 件作品'),
               ],
             ),
           ),

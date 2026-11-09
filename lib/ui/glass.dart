@@ -298,10 +298,19 @@ class GlassSegments extends StatelessWidget {
   @override
   Widget build(BuildContext context) => ClipRRect(
     borderRadius: BorderRadius.circular(16),
-    child: mx.MiuixTabRow(
+    child: mx.MiuixTabRowWithContour(
       tabs: labels,
       selectedTabIndex: selected,
       onTabSelected: onChanged,
+      itemSpacing: 0,
+      colors: mx.MiuixTabRowColors(
+        backgroundColor: ink(context).withValues(alpha: .045),
+        contentColor: muted(context),
+        selectedBackgroundColor: isDark(context)
+            ? Colors.white.withValues(alpha: .16)
+            : Colors.white.withValues(alpha: .95),
+        selectedContentColor: accentInk(context),
+      ),
       minWidth: 0,
       maxWidth: double.infinity,
       height: 48,
@@ -334,6 +343,7 @@ class GlassSlider extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Column(
     mainAxisSize: MainAxisSize.min,
+    crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
       if (label != null)
         Row(

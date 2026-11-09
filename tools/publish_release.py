@@ -20,12 +20,38 @@ def session(provider,token):
 def require(response):
     if not response.ok: raise RuntimeError('Remote API returned HTTP '+str(response.status_code))
     return response.json()
+def github_sync(token):
+    s=session('github',token)
+    api='https://api.github.com/repos/HighnessRK/liuguang'
+    head=require(s.get(api+'/git/ref/heads/main',timeout=30))['object']['sha']
+    commit=require(s.get(api+'/git/commits/'+head,timeout=30))
+    tree=require(s.get(api+'/git/trees/'+commit['tree']['sha'],params={'recursive':'1'},timeout=30))
+    remote={v['path']:v['sha'] for v in tree['tree'] if v['type']=='blob'}
+    rows=subprocess.check_output(['git','ls-tree','-rz','HEAD'],cwd=ROOT).split(b'\0')
+    local={}
+    changes=[]
+    for row in filter(None,rows):
+        meta,path=row.split(b'\t',1); mode,kind,sha=meta.decode().split();path=path.decode()
+        local[path]=sha
+        if remote.get(path)==sha:continue
+        data=subprocess.check_output(['git','show','HEAD:'+path],cwd=ROOT)
+        blob=require(s.post(api+'/git/blobs',json={'content':base64.b64encode(data).decode(),'encoding':'base64'},timeout=45))
+        changes.append({'path':path,'mode':mode,'type':'blob','sha':blob['sha']})
+    for path in remote.keys()-local.keys():changes.append({'path':path,'mode':'100644','type':'blob','sha':None})
+    if not changes:
+        print('GitHub source already current',flush=True);return
+    tree=require(s.post(api+'/git/trees',json={'base_tree':commit['tree']['sha'],'tree':changes},timeout=45))
+    new=require(s.post(api+'/git/commits',json={'message':'Update V1.0.0 source and validation','tree':tree['sha'],'parents':[head]},timeout=30))
+    require(s.patch(api+'/git/refs/heads/main',json={'sha':new['sha'],'force':False},timeout=30))
+    print('GitHub source synchronized through Git Data API:',len(changes),'files',flush=True)
 def push(tokens):
     cache=ROOT/'tools/.cache';cache.mkdir(exist_ok=True)
     helper=cache/'git-askpass.py'
     helper.write_text("import os,sys\nprint(os.environ['LIUGUANG_GIT_USER'] if 'username' in sys.argv[1].lower() else os.environ['LIUGUANG_GIT_TOKEN'])\n")
     cmd=cache/'git-askpass.cmd';cmd.write_text('@"'+sys.executable+'" "%~dp0git-askpass.py" %*\n')
     for provider,(owner,name,_) in REPOS.items():
+        if provider=='github':
+            github_sync(tokens[provider]);continue
         url=f'https://{ "github.com" if provider=="github" else "gitee.com"}/{owner}/{name}.git'
         remote='origin' if provider=='github' else 'gitee'
         if subprocess.run(['git','remote','get-url',remote],cwd=ROOT,capture_output=True).returncode:
@@ -33,7 +59,11 @@ def push(tokens):
         env=os.environ.copy();env.update(GIT_ASKPASS=str(cmd),GIT_TERMINAL_PROMPT='0',LIUGUANG_GIT_USER='x-access-token' if provider=='github' else owner,LIUGUANG_GIT_TOKEN=tokens[provider])
         print('Pushing source:',provider,flush=True)
         r=subprocess.run(['git','-c','credential.helper=','push','--set-upstream',remote,'main'],cwd=ROOT,env=env,capture_output=True,text=True,encoding='utf-8',errors='replace')
-        if r.returncode: raise RuntimeError(provider+' source push failed (credentials suppressed)')
+        if r.returncode:
+            clean = r.stderr
+            for value in tokens.values(): clean = clean.replace(value, '[REDACTED]')
+            print(clean[-1800:], file=sys.stderr)
+            raise RuntimeError(provider+' source push failed')
         print('Source push complete:',provider,flush=True)
 def release(tokens):
     notes=(ROOT/'CHANGELOG.md').read_text(encoding='utf8')
