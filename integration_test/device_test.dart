@@ -208,6 +208,10 @@ void main() {
       }
       expect(find.byType(TaskStatusCard), findsNothing);
       expect(find.text('开始增强'), findsOneWidget);
+      // Let the cancellation snackbar leave before dragging the tool panel.
+      // Otherwise the gesture can hit the floating message instead of scrolling.
+      await tester.pump(const Duration(seconds: 6));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('色彩平衡'));
       await tester.pumpAndSettle();
       final preview = find.byKey(const Key('editor-preview'));

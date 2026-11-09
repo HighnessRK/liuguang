@@ -16,7 +16,9 @@ $taskJob = Start-Job -ArgumentList $taskRoot,$taskFlutter,$Device,$taskLog,$Live
     Set-Location -LiteralPath $root
     # The caller supplies an ASCII drive mapping for Flutter's Android tools.
     $env:PUB_HOSTED_URL = 'https://pub.dev'
-    & $flutter test --no-pub integration_test/device_test.dart -d $device "--dart-define=LIVE_PROVIDER_TEST=$($live.ToString().ToLower())" *> $log
+    # Flutter defaults to uninstalling the package when integration tests finish.
+    # Retain the installed package and its private data on a user's device.
+    & $flutter test --no-pub --no-uninstall integration_test/device_test.dart -d $device "--dart-define=LIVE_PROVIDER_TEST=$($live.ToString().ToLower())" *> $log
     return $LASTEXITCODE
 }
 $taskConfirmed = $false
