@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:dio/io.dart';
 import 'package:liuguang/core/image_transport.dart';
 
 import 'dart:convert';
@@ -282,6 +283,41 @@ void main() {
         expect(live.imageApi.ready, isTrue, reason: '手机内须已保存可用的生图配置');
         expect(live.imageApi.model, 'gpt-image-2.6-sunburst');
         final api = StudioApi(live);
+        const proxyPort = int.fromEnvironment('LIVE_PROXY_PORT');
+        if (proxyPort > 0) {
+          api.dio.httpClientAdapter = IOHttpClientAdapter(
+            createHttpClient: () =>
+                HttpClient()..findProxy = (_) => 'PROXY 127.0.0.1:$proxyPort',
+          );
+        }
+        // Count every image submission, including an explicit async fallback.
+        // Polling and result downloads never create additional model tasks.
+        var submits = 0;
+        const submitLimit = int.fromEnvironment(
+          'LIVE_SUBMIT_LIMIT',
+          defaultValue: 2,
+        );
+        api.dio.interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (request, handler) {
+              if (request.method == 'POST' &&
+                  request.uri.path.contains('/images/')) {
+                if (submits >= submitLimit) {
+                  handler.reject(
+                    DioException(
+                      requestOptions: request,
+                      error: '真实模型提交次数已达测试上限',
+                    ),
+                  );
+                  return;
+                }
+                debugPrint('LIVE_PROVIDER_SUBMIT ${++submits}');
+              }
+              handler.next(request);
+            },
+          ),
+        );
+        debugPrint('LIVE_PROVIDER_PROTOCOL ${live.imageApi.protocol.name}');
         String last = '';
         void stage(String value) {
           if (value != last) {

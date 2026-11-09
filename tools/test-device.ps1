@@ -1,4 +1,6 @@
-param([string]$Device = '', [switch]$LiveProvider)
+param([string]$Device = '', [switch]$LiveProvider, [switch]$LiveOnly,
+      [ValidateRange(0,65535)][int]$ProxyPort = 0,
+      [ValidateRange(1,3)][int]$LiveSubmitLimit = 2)
 $ErrorActionPreference = 'Stop'
 $taskRoot = Split-Path -Parent $PSScriptRoot
 $taskAdb = Join-Path $env:LOCALAPPDATA 'Android\Sdk\platform-tools\adb.exe'
@@ -11,14 +13,19 @@ $taskCache = Join-Path $taskRoot 'tools\.cache'
 New-Item -ItemType Directory -Force $taskCache | Out-Null
 $taskFlutter = (Get-Command flutter.bat).Source
 $taskLog = Join-Path $taskCache 'device-test-final.log'
-$taskJob = Start-Job -ArgumentList $taskRoot,$taskFlutter,$Device,$taskLog,$LiveProvider.IsPresent -ScriptBlock {
-    param($root,$flutter,$device,$log,$live)
+$taskJob = Start-Job -ArgumentList $taskRoot,$taskFlutter,$Device,$taskLog,$LiveProvider.IsPresent,$LiveOnly.IsPresent,$ProxyPort,$LiveSubmitLimit -ScriptBlock {
+    param($root,$flutter,$device,$log,$live,$liveOnly,$proxyPort,$submitLimit)
     Set-Location -LiteralPath $root
     # The caller supplies an ASCII drive mapping for Flutter's Android tools.
     $env:PUB_HOSTED_URL = 'https://pub.dev'
+    $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
     # Flutter defaults to uninstalling the package when integration tests finish.
     # Retain the installed package and its private data on a user's device.
-    & $flutter test --no-pub --no-uninstall integration_test/device_test.dart -d $device "--dart-define=LIVE_PROVIDER_TEST=$($live.ToString().ToLower())" *> $log
+    $testArguments = @('test','--no-pub','--no-uninstall','integration_test/device_test.dart','-d',$device,
+        "--dart-define=LIVE_PROVIDER_TEST=$($live.ToString().ToLower())",
+        "--dart-define=LIVE_PROXY_PORT=$proxyPort", "--dart-define=LIVE_SUBMIT_LIMIT=$submitLimit")
+    if ($liveOnly) { $testArguments += @('--plain-name','live configured provider') }
+    & $flutter @testArguments *> $log
     return $LASTEXITCODE
 }
 $taskConfirmed = $false
