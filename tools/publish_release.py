@@ -66,13 +66,17 @@ def push(tokens):
             raise RuntimeError(provider+' source push failed')
         print('Source push complete:',provider,flush=True)
 def release(tokens):
-    notes=(ROOT/'CHANGELOG.md').read_text(encoding='utf8')
+    section=''; entries=[]
+    for line in (ROOT/'CHANGELOG.md').read_text(encoding='utf8').splitlines():
+        if line.startswith('### '): section=line[4:]
+        elif line.startswith('- ') and section in ['新增','优化','修复']: entries.append(section+'：'+line[2:])
+    notes='\n'.join(entries)
     results={}
     for provider,(owner,name,api) in REPOS.items():
         s=session(provider,tokens[provider]);endpoint=f'{api}/repos/{owner}/{name}/releases'
         response=s.get(endpoint,timeout=30);require(response)
         existing=next((v for v in response.json() if v.get('tag_name')=='v1.0.0'),None)
-        body=notes+'\n\nGitHub 下载备用入口：https://github.com/HighnessRK/liuguang/releases/tag/v1.0.0\n'
+        body=notes
         payload={'tag_name':'v1.0.0','target_commitish':'main','name':'琉光 V1.0.0','body':body,'prerelease':False}
         if provider=='github':payload['draft']=True
         print('Preparing release:',provider,flush=True)

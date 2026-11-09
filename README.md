@@ -50,7 +50,7 @@ V1.0.0 · Flutter 安卓 AI 影像工作室。Android 10+，ARM64。
 
 `lib/core`：API、数据、加密配置、原子索引写入和图像处理。`lib/screens`：页面。`lib/ui/glass.dart`：统一玻璃组件。`shaders`：实时调色；折射和高光由渲染器提供。
 
-Flutter 承担主界面和业务。根据真机反馈，已移除原生 PlatformView 导航及截图回传，改用 Liquid Glass Renderer 1.0.0-dev.2 在同一 Flutter GPU/Vulkan 渲染管线中实时完成折射、透镜和高光。Miuix KMP 和 Liquid-Glass-Android 作为设计与效果参考。
+Flutter 承担主界面和业务，基础控件实际使用 Flutter_miuix 1.3.0。卡片使用参考项目相同的共享背景模糊与渐变材质，导航使用 Liquid Glass Renderer 1.0.0-dev.2 实时透镜。没有原生 PlatformView 或截图回传。Miuix KMP 和 Liquid-Glass-Android 作为原始设计参考。
 
 每个主页面独立隔离玻璃层，避免 IndexedStack 中隐藏页面的几何参与当前画面；编辑器工具滚动区另设裁切边界。同页控件共享背景，嵌套玻璃与导航使用局部 GPU 捕获。没有定时截图、PNG 编码或跨平台回传。当前渲染器为固定版本的预发布包，已在连接设备上验证；不支持完整 GPU 管线的设备会回退到透明材质。
 
@@ -101,3 +101,5 @@ APK 安装前验证应用包名、既有发布签名和版本号；下载可取�
 诊断日志仅保留最近 300 条事件、时间及状态码，不收集接口 Key、地址、提示词、图片或响应正文；支持查看、清空和用户主动导出。版本更新说明见 [CHANGELOG.md](CHANGELOG.md)。
 
 本版实际使用 Flutter_miuix 1.3.0 的按钮、输入框、分段选择、滑条、开关与复选框，主题和极光背景参数对齐本机参考项目。底部导航保留实时玻璃透镜。
+
+发布工具 `tools/publish_release.py` 从外部凭据文件读取令牌，支持源码同步与 Release 附件上传。令牌不会写入仓库；GitHub 网络限制时使用 Git Data API 同步源码。公开仓库不包含正式签名私钥，维护者须私下备份并继续使用原密钥签名。
