@@ -54,3 +54,8 @@ app.*.map.json
 *.keystore
 android/key.properties
 *.apk
+
+/docs/screenshots/*
+!/docs/screenshots/published-appearance-fixed.png
+!/docs/screenshots/published-library-fixed.png
+!/docs/screenshots/published-update-settings.png

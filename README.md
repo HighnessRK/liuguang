@@ -103,3 +103,5 @@ APK 安装前验证应用包名、既有发布签名和版本号；下载可取�
 本版实际使用 Flutter_miuix 1.3.0 的按钮、输入框、分段选择、滑条、开关与复选框，主题和极光背景参数对齐本机参考项目。底部导航保留实时玻璃透镜。
 
 发布工具 `tools/publish_release.py` 从外部凭据文件读取令牌，支持源码同步与 Release 附件上传。令牌不会写入仓库；GitHub 网络限制时使用 Git Data API 同步源码。公开仓库不包含正式签名私钥，维护者须私下备份并继续使用原密钥签名。
+
+当前真机界面：[作品页](docs/screenshots/published-library-fixed.png) · [外观](docs/screenshots/published-appearance-fixed.png) · [应用更新](docs/screenshots/published-update-settings.png)。
