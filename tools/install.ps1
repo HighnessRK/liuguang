@@ -1,6 +1,10 @@
-param([string]$Apk = 'dist\liuguang-v1.0.0-arm64.apk', [string]$Device = '')
+param([string]$Apk = '', [string]$Device = '')
 $ErrorActionPreference = 'Stop'
 $taskRoot = Split-Path -Parent $PSScriptRoot
+if (-not $Apk) {
+    $taskVersion = [regex]::Match((Get-Content (Join-Path $taskRoot 'pubspec.yaml') -Raw), '(?m)^version:\s*([^+\s]+)').Groups[1].Value
+    $Apk = "dist\liuguang-v$taskVersion-arm64.apk"
+}
 $taskAdb = Join-Path $env:LOCALAPPDATA 'Android\Sdk\platform-tools\adb.exe'
 if (-not $Device) {
     $taskDevices = @(& $taskAdb devices | Select-String '^\S+\s+device$')

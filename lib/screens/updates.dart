@@ -37,13 +37,14 @@ Future<void> checkForAppUpdates(BuildContext context, AppStore store) async {
 
 class UpdatesScreen extends StatefulWidget {
   final AppStore store;
-  const UpdatesScreen({super.key, required this.store});
+  final UpdateService? service;
+  const UpdatesScreen({super.key, required this.store, this.service});
   @override
   State<UpdatesScreen> createState() => _UpdatesScreenState();
 }
 
 class _UpdatesScreenState extends State<UpdatesScreen> {
-  late final service = UpdateService(widget.store);
+  late final service = widget.service ?? UpdateService(widget.store);
   bool checking = false;
   ReleaseInfo? release;
   String? message;
@@ -63,6 +64,15 @@ class _UpdatesScreenState extends State<UpdatesScreen> {
               ? '当前已是最新版本'
               : '发现新版本';
         });
+      }
+      if (value != null &&
+          compareVersions(value.version, appVersion) > 0 &&
+          mounted) {
+        setState(() => checking = false);
+        await glassSheet(
+          context,
+          ReleaseCard(service: service, release: value),
+        );
       }
     } catch (_) {
       if (mounted) setState(() => message = '检查失败，请重试或切换下载源');
@@ -141,7 +151,6 @@ class _UpdatesScreenState extends State<UpdatesScreen> {
           padding: const EdgeInsets.symmetric(vertical: 16),
           child: Text(message!, textAlign: TextAlign.center),
         ),
-      if (release != null) ReleaseCard(service: service, release: release!),
       const SectionLabel('更新日志'),
       const VersionLog(),
       const SizedBox(height: 20),
@@ -248,80 +257,108 @@ class VersionLog extends StatefulWidget {
   State<VersionLog> createState() => _VersionLogState();
 }
 
+Color changeTagColor(String type, bool dark) => switch (type) {
+  '新增' => Color(dark ? 0xff6bdba6 : 0xff198754),
+  '修复' => Color(dark ? 0xffffbc79 : 0xffc96108),
+  _ => Color(dark ? 0xff94baff : 0xff2e68cd),
+};
+
 class _VersionLogState extends State<VersionLog> {
-  bool open = true;
+  final expanded = <String>{appVersion};
   @override
-  Widget build(BuildContext context) => Glass(
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: () => setState(() => open = !open),
-          child: Row(
-            children: [
-              const Expanded(
-                child: Text(
-                  'V1.0.0 · 2026-11-09',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-                ),
-              ),
-              AnimatedRotation(
-                turns: open ? .5 : 0,
-                duration: const Duration(milliseconds: 200),
-                child: const Icon(Icons.expand_more),
-              ),
-            ],
-          ),
-        ),
-        AnimatedSize(
-          duration: const Duration(milliseconds: 200),
-          alignment: Alignment.topCenter,
-          child: open
-              ? Column(
-                  children: [
-                    for (final line in releaseNotes.split('\n'))
-                      Padding(
-                        padding: const EdgeInsets.only(top: 12),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 7,
-                                vertical: 3,
-                              ),
-                              decoration: BoxDecoration(
-                                color: accent(context).withValues(alpha: .12),
-                                borderRadius: BorderRadius.circular(7),
-                              ),
-                              child: Text(
-                                line.substring(0, 2),
-                                style: TextStyle(
-                                  color: accentInk(context),
-                                  fontSize: 12,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Text(
-                                line.substring(3),
-                                style: const TextStyle(
-                                  fontSize: 14,
-                                  height: 1.6,
-                                ),
-                              ),
-                            ),
-                          ],
+  Widget build(BuildContext context) => Column(
+    children: [
+      for (final entry in [
+        (appVersion, releaseNotes),
+        ('1.0.0', previousReleaseNotes),
+      ])
+        Padding(
+          padding: const EdgeInsets.only(bottom: 14),
+          child: Glass(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => setState(() {
+                    if (!expanded.add(entry.$1)) expanded.remove(entry.$1);
+                  }),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'V${entry.$1} · 2026-11-09',
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                       ),
-                  ],
-                )
-              : const SizedBox.shrink(),
+                      AnimatedRotation(
+                        turns: expanded.contains(entry.$1) ? .5 : 0,
+                        duration: const Duration(milliseconds: 200),
+                        child: const Icon(Icons.expand_more),
+                      ),
+                    ],
+                  ),
+                ),
+                AnimatedSize(
+                  duration: const Duration(milliseconds: 200),
+                  alignment: Alignment.topCenter,
+                  child: expanded.contains(entry.$1)
+                      ? Column(
+                          children: [
+                            for (final line in entry.$2.split('\n'))
+                              Padding(
+                                padding: const EdgeInsets.only(top: 14),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 7,
+                                        vertical: 3,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: changeTagColor(
+                                          line.substring(0, 2),
+                                          isDark(context),
+                                        ).withValues(alpha: .12),
+                                        borderRadius: BorderRadius.circular(7),
+                                      ),
+                                      child: Text(
+                                        line.substring(0, 2),
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: changeTagColor(
+                                            line.substring(0, 2),
+                                            isDark(context),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Text(
+                                        line.substring(3),
+                                        style: const TextStyle(
+                                          fontSize: 14,
+                                          height: 1.6,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                          ],
+                        )
+                      : const SizedBox.shrink(),
+                ),
+              ],
+            ),
+          ),
         ),
-      ],
-    ),
+    ],
   );
 }
 
@@ -376,7 +413,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
       const SizedBox(height: 16),
       FutureBuilder<String>(
         future: log,
-        builder: (_, snapshot) => SelectableText(
+        builder: (_, snapshot) => StudioSelectable(
           snapshot.data?.isNotEmpty == true ? snapshot.data! : '暂无日志',
           style: const TextStyle(fontSize: 12, height: 1.6),
         ),

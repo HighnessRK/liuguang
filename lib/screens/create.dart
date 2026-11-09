@@ -9,6 +9,7 @@ import 'package:image_picker/image_picker.dart';
 
 import '../core/api.dart';
 import '../core/imaging.dart';
+import '../core/image_transport.dart';
 import '../core/models.dart';
 import '../core/store.dart';
 import '../ui/glass.dart';
@@ -48,6 +49,7 @@ class _CreateScreenState extends State<CreateScreen> {
   CancelToken? token;
   Timer? timer;
   int seconds = 0;
+  String taskStage = '正在准备请求';
   String? error;
   List<Artwork> results = [];
   @override
@@ -117,6 +119,7 @@ class _CreateScreenState extends State<CreateScreen> {
   }
 
   Future<void> polish() async {
+    if (busy || polishing) return;
     if (prompt.text.trim().isEmpty) {
       toast(context, '先写下你的创意，再让助手润色');
       return;
@@ -150,13 +153,13 @@ class _CreateScreenState extends State<CreateScreen> {
                 style: TextStyle(color: muted(ctx), fontSize: 14),
               ),
               const SectionLabel('原提示词'),
-              SelectableText(
+              StudioSelectable(
                 original,
                 style: TextStyle(color: muted(ctx), height: 1.7),
               ),
               const SectionLabel('润色结果'),
               Glass(
-                child: SelectableText(
+                child: StudioSelectable(
                   improved,
                   style: const TextStyle(height: 1.8),
                 ),
@@ -187,6 +190,8 @@ class _CreateScreenState extends State<CreateScreen> {
   }
 
   Future<void> generate() async {
+    if (busy || polishing) return;
+    FocusManager.instance.primaryFocus?.unfocus();
     if (!widget.store.imageApi.ready) {
       widget.onSettings();
       toast(context, '先连接你的生图模型');
@@ -221,6 +226,9 @@ class _CreateScreenState extends State<CreateScreen> {
         inputs: [if (mode == 1 && base != null) base!, ...references],
         cancelToken: token,
         operation: mode == 1 || references.isNotEmpty ? '图生图' : '文生图',
+        onStage: (stage) {
+          if (mounted && taskStage != stage) setState(() => taskStage = stage);
+        },
       );
       final saved = <Artwork>[];
       for (final bytes in reply.images) {
@@ -255,7 +263,22 @@ class _CreateScreenState extends State<CreateScreen> {
       }
       if (mounted) {
         setState(() => results = saved);
-        toast(context, '已完成并保存 ${saved.length} 个作品');
+        final mismatch = saved.where(
+          (art) => !matchesRequestedAspect(
+            art.width,
+            art.height,
+            settings.width,
+            settings.height,
+          ),
+        );
+        if (mismatch.isNotEmpty) {
+          setState(
+            () => error =
+                '接口返回的画面比例与所选 ${settings.aspectLabel} 不一致（实际 ${mismatch.first.width}×${mismatch.first.height}）。已保存原始结果，未裁切或拉伸；请检查服务商对此模型的尺寸支持。',
+          );
+        } else {
+          toast(context, '已完成并保存 ${saved.length} 个作品');
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -270,312 +293,341 @@ class _CreateScreenState extends State<CreateScreen> {
   }
 
   @override
-  Widget build(BuildContext context) => ListView(
-    padding: const EdgeInsets.fromLTRB(22, 5, 22, 125),
-    children: [
-      PageHeader(
-        title: '创作',
-        action: GlassIcon(
-          Icons.forum_outlined,
-          tooltip: '创作助手',
-          onTap: () => Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => AssistantScreen(
-                store: widget.store,
-                api: widget.api,
-                onUsePrompt: (value) {
-                  prompt.text = value;
-                },
+  Widget build(BuildContext context) {
+    if (busy) {
+      return ListView(
+        padding: const EdgeInsets.fromLTRB(24, 0, 24, 125),
+        children: [
+          const PageHeader(title: '创作'),
+          TaskStatusCard(
+            title: '正在创作',
+            stage: taskStage,
+            seconds: seconds,
+            onCancel: token?.isCancelled == true
+                ? null
+                : () {
+                    token?.cancel();
+                    setState(() => taskStage = '正在取消等待');
+                  },
+          ),
+          const SizedBox(height: 18),
+          Text(
+            '${options.resolution} · ${options.aspectLabel}',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 12, color: muted(context)),
+          ),
+        ],
+      );
+    }
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(22, 5, 22, 125),
+      children: [
+        PageHeader(
+          title: '创作',
+          action: GlassIcon(
+            Icons.forum_outlined,
+            tooltip: '创作助手',
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => AssistantScreen(
+                  store: widget.store,
+                  api: widget.api,
+                  onUsePrompt: (value) {
+                    prompt.text = value;
+                  },
+                ),
               ),
             ),
           ),
         ),
-      ),
 
-      GlassSegments(
-        labels: const ['文生图', '图生图'],
-        selected: mode,
-        onChanged: (v) {
-          if (!busy) {
-            setState(() => mode = v);
-          }
-        },
-      ),
-      SectionLabel(
-        '提示词',
-        action: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: polishing || busy ? null : polish,
-          child: Text(
-            polishing ? '润色中…' : '✧ 智能润色',
-            style: TextStyle(
-              color: accentInk(context),
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
+        GlassSegments(
+          labels: const ['文生图', '图生图'],
+          selected: mode,
+          onChanged: (v) {
+            if (!busy) {
+              setState(() => mode = v);
+            }
+          },
+        ),
+        SectionLabel(
+          '提示词',
+          action: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: polishing || busy ? null : polish,
+            child: Text(
+              polishing ? '润色中…' : '✧ 智能润色',
+              style: TextStyle(
+                color: accentInk(context),
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
         ),
-      ),
-      Glass(
-        padding: const EdgeInsets.fromLTRB(17, 4, 17, 12),
-        child: Column(
-          children: [
-            IgnorePointer(
-              ignoring: busy,
-              child: GlassField(
-                controller: prompt,
-                hint: '描述主体、场景与光线…',
-                minLines: 4,
-                maxLines: 9,
+        Glass(
+          padding: const EdgeInsets.fromLTRB(17, 4, 17, 12),
+          child: Column(
+            children: [
+              IgnorePointer(
+                ignoring: busy,
+                child: GlassField(
+                  controller: prompt,
+                  hint: '描述主体、场景与光线…',
+                  minLines: 4,
+                  maxLines: 9,
+                ),
+              ),
+              Row(
+                children: [
+                  Icon(
+                    Icons.lightbulb_outline_rounded,
+                    size: 13,
+                    color: muted(context),
+                  ),
+                  const SizedBox(width: 5),
+                  Text(
+                    '主体 · 场景 · 光线 · 风格',
+                    style: TextStyle(color: muted(context), fontSize: 12),
+                  ),
+                  const Spacer(),
+                  GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: busy ? null : () => prompt.clear(),
+                    child: Text(
+                      '清空',
+                      style: TextStyle(fontSize: 12, color: muted(context)),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        if (mode == 1) ...[
+          const SectionLabel('底图', caption: '原图会单独保留'),
+          if (base == null)
+            GlassButton(
+              '添加底图',
+              icon: Icons.add_photo_alternate_outlined,
+              onTap: busy ? null : pickBase,
+            )
+          else
+            _inputTile(
+              base!,
+              '底图',
+              () => setState(() => base = null),
+              large: true,
+            ),
+        ],
+        SectionLabel(
+          '参考图',
+          caption: '${references.length} / 8 · 可添加多张',
+          action: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: busy ? null : pickReferences,
+            child: Icon(
+              Icons.add_circle_outline_rounded,
+              size: 21,
+              color: accentInk(context),
+            ),
+          ),
+        ),
+        if (references.isEmpty)
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: busy ? null : pickReferences,
+            child: Glass(
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 20),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.photo_library_outlined,
+                    color: muted(context),
+                    size: 23,
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Text(
+                      '添加人物、构图或风格参考',
+                      style: TextStyle(color: muted(context), fontSize: 14),
+                    ),
+                  ),
+                  Icon(Icons.add_rounded, color: accentInk(context), size: 20),
+                ],
               ),
             ),
-            Row(
-              children: [
-                Icon(
-                  Icons.lightbulb_outline_rounded,
-                  size: 13,
-                  color: muted(context),
-                ),
-                const SizedBox(width: 5),
-                Text(
-                  '主体 · 场景 · 光线 · 风格',
-                  style: TextStyle(color: muted(context), fontSize: 12),
-                ),
-                const Spacer(),
-                GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: busy ? null : () => prompt.clear(),
-                  child: Text(
-                    '清空',
-                    style: TextStyle(fontSize: 12, color: muted(context)),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-      const SizedBox(height: 12),
-      if (mode == 1) ...[
-        const SectionLabel('底图', caption: '原图会单独保留'),
-        if (base == null)
-          GlassButton(
-            '添加底图',
-            icon: Icons.add_photo_alternate_outlined,
-            onTap: busy ? null : pickBase,
           )
         else
-          _inputTile(
-            base!,
-            '底图',
-            () => setState(() => base = null),
-            large: true,
+          SizedBox(
+            height: 99,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: references.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 10),
+              itemBuilder: (_, i) => SizedBox(
+                width: 100,
+                child: _inputTile(
+                  references[i],
+                  '${i + 1}',
+                  () => setState(() => references.removeAt(i)),
+                ),
+              ),
+            ),
           ),
-      ],
-      SectionLabel(
-        '参考图',
-        caption: '${references.length} / 8 · 可添加多张',
-        action: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: busy ? null : pickReferences,
-          child: Icon(
-            Icons.add_circle_outline_rounded,
-            size: 21,
-            color: accentInk(context),
-          ),
-        ),
-      ),
-      if (references.isEmpty)
+        const SectionLabel('生成规格'),
         GestureDetector(
           behavior: HitTestBehavior.opaque,
-          onTap: busy ? null : pickReferences,
+          onTap: busy
+              ? null
+              : () async {
+                  final result = await glassSheet<GenerationOptions>(
+                    context,
+                    GenerationSettings(initial: options),
+                  );
+                  if (result != null && mounted) {
+                    setState(() => options = result);
+                  }
+                },
           child: Glass(
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 20),
             child: Row(
               children: [
-                Icon(
-                  Icons.photo_library_outlined,
-                  color: muted(context),
-                  size: 23,
+                Glass(
+                  radius: 16,
+                  padding: const EdgeInsets.all(12),
+                  child: Icon(
+                    Icons.aspect_ratio_rounded,
+                    color: accentInk(context),
+                    size: 24,
+                  ),
                 ),
                 const SizedBox(width: 14),
                 Expanded(
-                  child: Text(
-                    '添加人物、构图或风格参考',
-                    style: TextStyle(color: muted(context), fontSize: 14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '${options.resolution} · ${options.aspectLabel}',
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 7),
+                      Text(
+                        '${_quality(options.quality)}  /  ${options.format.toUpperCase()}  /  ${options.count} 张',
+                        style: TextStyle(color: muted(context), fontSize: 12),
+                      ),
+                    ],
                   ),
                 ),
-                Icon(Icons.add_rounded, color: accentInk(context), size: 20),
+                Icon(Icons.chevron_right_rounded, color: muted(context)),
               ],
             ),
           ),
-        )
-      else
-        SizedBox(
-          height: 99,
-          child: ListView.separated(
-            scrollDirection: Axis.horizontal,
-            itemCount: references.length,
-            separatorBuilder: (_, _) => const SizedBox(width: 10),
-            itemBuilder: (_, i) => SizedBox(
-              width: 100,
-              child: _inputTile(
-                references[i],
-                '${i + 1}',
-                () => setState(() => references.removeAt(i)),
-              ),
-            ),
-          ),
         ),
-      const SectionLabel('生成规格'),
-      GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: busy
-            ? null
-            : () async {
-                final result = await glassSheet<GenerationOptions>(
-                  context,
-                  GenerationSettings(initial: options),
-                );
-                if (result != null && mounted) {
-                  setState(() => options = result);
-                }
-              },
-        child: Glass(
-          child: Row(
-            children: [
-              Glass(
-                radius: 16,
-                padding: const EdgeInsets.all(12),
-                child: Icon(
-                  Icons.aspect_ratio_rounded,
-                  color: accentInk(context),
-                  size: 24,
-                ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Container(
+              width: 5,
+              height: 5,
+              decoration: BoxDecoration(
+                color: widget.store.imageApi.ready
+                    ? accentInk(context)
+                    : muted(context),
+                shape: BoxShape.circle,
               ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '${options.resolution} · ${options.aspectLabel}',
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 7),
-                    Text(
-                      '${_quality(options.quality)}  /  ${options.format.toUpperCase()}  /  ${options.count} 张',
-                      style: TextStyle(color: muted(context), fontSize: 12),
-                    ),
-                  ],
-                ),
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                widget.store.imageApi.model.isEmpty
+                    ? '尚未连接生图模型'
+                    : widget.store.imageApi.model,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 12, color: muted(context)),
               ),
-              Icon(Icons.chevron_right_rounded, color: muted(context)),
-            ],
-          ),
+            ),
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: widget.onSettings,
+              child: Text(
+                '切换模型',
+                style: TextStyle(fontSize: 12, color: accentInk(context)),
+              ),
+            ),
+          ],
         ),
-      ),
-      const SizedBox(height: 12),
-      Row(
-        children: [
-          Container(
-            width: 5,
-            height: 5,
-            decoration: BoxDecoration(
-              color: widget.store.imageApi.ready
-                  ? accentInk(context)
-                  : muted(context),
-              shape: BoxShape.circle,
+        const SizedBox(height: 22),
+        if (busy)
+          TaskStatusCard(
+            title: '正在创作',
+            stage: taskStage,
+            seconds: seconds,
+            onCancel: token?.isCancelled == true
+                ? null
+                : () {
+                    token?.cancel();
+                    setState(() => taskStage = '正在取消等待');
+                  },
+          )
+        else
+          SizedBox(
+            width: double.infinity,
+            child: GlassButton(
+              '开始创作',
+              primary: true,
+              icon: Icons.auto_awesome_rounded,
+              onTap: generate,
             ),
           ),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Text(
-              widget.store.imageApi.model.isEmpty
-                  ? '尚未连接生图模型'
-                  : widget.store.imageApi.model,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 12, color: muted(context)),
-            ),
-          ),
-          GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: widget.onSettings,
-            child: Text(
-              '切换模型',
-              style: TextStyle(fontSize: 12, color: accentInk(context)),
+        if (error != null) ...[
+          const SizedBox(height: 16),
+          Glass(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  results.isEmpty ? '这次没有完成' : '尺寸提示',
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 8),
+                StudioSelectable(
+                  error!,
+                  style: TextStyle(
+                    color: muted(context),
+                    fontSize: 14,
+                    height: 1.8,
+                  ),
+                ),
+              ],
             ),
           ),
         ],
-      ),
-      const SizedBox(height: 22),
-      SizedBox(
-        width: double.infinity,
-        child: GlassButton(
-          busy ? '正在生成 · ${seconds}s' : '开始创作',
-          primary: true,
-          icon: Icons.auto_awesome_rounded,
-          busy: busy,
-          onTap: generate,
-        ),
-      ),
-      if (busy) ...[
-        const SizedBox(height: 12),
-        Text(
-          '正在等待模型返回，请保持应用在前台。',
-          textAlign: TextAlign.center,
-          style: TextStyle(fontSize: 12, color: muted(context)),
-        ),
-        const SizedBox(height: 10),
-        GlassButton('取消请求', small: true, onTap: () => token?.cancel()),
-      ],
-      if (error != null) ...[
-        const SizedBox(height: 16),
-        Glass(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                '这次没有完成',
-                style: TextStyle(fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 8),
-              SelectableText(
-                error!,
-                style: TextStyle(
-                  color: muted(context),
-                  fontSize: 14,
-                  height: 1.8,
+        if (results.isNotEmpty) ...[
+          const SectionLabel('生成结果', caption: '已保存到作品'),
+          ...results.map(
+            (art) => Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () =>
+                    openArtwork(context, widget.store, art, widget.onEdit),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(24),
+                  child: Image.file(File(art.path), fit: BoxFit.cover),
                 ),
-              ),
-            ],
-          ),
-        ),
-      ],
-      if (results.isNotEmpty) ...[
-        const SectionLabel('生成结果', caption: '已保存到作品'),
-        ...results.map(
-          (art) => Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: () =>
-                  openArtwork(context, widget.store, art, widget.onEdit),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(24),
-                child: Image.file(File(art.path), fit: BoxFit.cover),
               ),
             ),
           ),
-        ),
+        ],
+        const SizedBox(height: 22),
       ],
-      const SizedBox(height: 22),
-    ],
-  );
+    );
+  }
 
   Widget _inputTile(
     String path,

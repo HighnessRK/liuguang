@@ -3,6 +3,9 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart' show compute;
+
+import 'image_transport.dart';
 
 import 'models.dart';
 import 'store.dart';
@@ -48,6 +51,24 @@ String effectivePrompt(String original, String moderation) {
   return note.isEmpty ? original : '$original\n\n[应用附加审核偏好]\n$note';
 }
 
+String canvasPrompt(String original, GenerationOptions options) =>
+    '${effectivePrompt(original, options.moderation)}\n\n[画布要求] 宽 ${options.width} 像素，高 ${options.height} 像素；宽:高=${options.aspectLabel}，${options.width < options.height
+        ? '竖向构图，不能生成横向画面'
+        : options.width > options.height
+        ? '横向构图，不能生成竖向画面'
+        : '正方形构图'}。保持原提示词的主体和创作意图。';
+bool usesSuixiangTasks(EndpointConfig config) =>
+    {
+      'www.sui-xiang.net',
+      'sui-xiang.net',
+      'www.sui-xiang.vip',
+      'sui-xiang.vip',
+      'sui-xiang.com',
+      'www.sui-xiang.com',
+    }.contains(Uri.tryParse(config.baseUrl)?.host.toLowerCase()) &&
+    (config.model.startsWith('gpt-image-') ||
+        config.model.startsWith('grok-imagine-'));
+
 Map<String, dynamic> imagePayload(
   EndpointConfig config,
   GenerationOptions options,
@@ -55,10 +76,17 @@ Map<String, dynamic> imagePayload(
 ) {
   final result = <String, dynamic>{
     'model': config.model,
-    'prompt': effectivePrompt(prompt, options.moderation),
+    'prompt': canvasPrompt(prompt, options),
     'n': options.count,
     'size': options.size,
   };
+  if (usesSuixiangTasks(config) && config.model.startsWith('gpt-image-2.6')) {
+    result['complexity'] = options.quality == 'low'
+        ? 'low'
+        : options.quality == 'high'
+        ? 'high'
+        : 'medium';
+  }
   if (config.protocol == ApiProtocol.gptImage) {
     result['quality'] = options.quality;
     result['output_format'] = options.format == 'gif' ? 'png' : options.format;
@@ -83,17 +111,21 @@ class ImageReply {
 class StudioApi {
   final AppStore store;
   final Dio dio;
-  StudioApi(this.store, {Dio? dio})
-    : dio =
-          dio ??
-          Dio(
-            BaseOptions(
-              connectTimeout: const Duration(seconds: 25),
-              receiveTimeout: const Duration(minutes: 8),
-              sendTimeout: const Duration(minutes: 3),
-              headers: {'Accept': 'application/json'},
-            ),
-          );
+  final Duration pollInterval;
+  StudioApi(
+    this.store, {
+    Dio? dio,
+    this.pollInterval = const Duration(seconds: 3),
+  }) : dio =
+           dio ??
+           Dio(
+             BaseOptions(
+               connectTimeout: const Duration(seconds: 25),
+               receiveTimeout: const Duration(minutes: 8),
+               sendTimeout: const Duration(minutes: 3),
+               headers: {'Accept': 'application/json'},
+             ),
+           );
 
   Options _auth(EndpointConfig c) =>
       Options(headers: {'Authorization': 'Bearer ${c.key}'});
@@ -137,6 +169,7 @@ class StudioApi {
     Uint8List? mask,
     CancelToken? cancelToken,
     String operation = '文生图',
+    void Function(String)? onStage,
   }) async {
     final config = store.imageApi.snapshot();
     if (!config.ready) {
@@ -166,16 +199,30 @@ class StudioApi {
     String? failure;
     try {
       dynamic data;
+      final prepared = <Map<String, dynamic>>[];
+      if (inputs.length > 9) throw StudioException('底图与参考图合计不能超过九张');
+      for (var i = 0; i < inputs.length; i++) {
+        if (cancelToken?.isCancelled == true) throw cancelToken!.cancelError!;
+        onStage?.call('正在准备图片副本');
+        prepared.add(
+          await compute(prepareImageInput, {
+            'bytes': await File(inputs[i]).readAsBytes(),
+            if (i == 0 && mask != null) 'mask': mask,
+          }),
+        );
+      }
+      if (cancelToken?.isCancelled == true) throw cancelToken!.cancelError!;
+      onStage?.call('正在提交任务');
       if (config.protocol == ApiProtocol.chatImage) {
         final content = <Map<String, dynamic>>[
           {
             'type': 'text',
             'text':
-                '${effectivePrompt(prompt, options.moderation)}\n\n输出 ${options.count} 张图片，目标尺寸 ${options.size}，质量 ${options.quality}。请返回图片。',
+                '${canvasPrompt(prompt, options)}\n\n输出 ${options.count} 张图片，目标尺寸 ${options.size}，质量 ${options.quality}。请返回图片。',
           },
         ];
-        for (final path in inputs) {
-          final bytes = await File(path).readAsBytes();
+        for (final input in prepared) {
+          final bytes = input['bytes'] as Uint8List;
           content.add({
             'type': 'image_url',
             'image_url': {
@@ -206,7 +253,7 @@ class StudioApi {
             fields.map((k, v) => MapEntry(k, v.toString())),
           );
           for (var i = 0; i < inputs.length; i++) {
-            final bytes = await File(inputs[i]).readAsBytes();
+            final bytes = prepared[i]['bytes'] as Uint8List;
             form.files.add(
               MapEntry(
                 inputs.length == 1 ? 'image' : 'image[]',
@@ -223,7 +270,7 @@ class StudioApi {
               MapEntry(
                 'mask',
                 MultipartFile.fromBytes(
-                  mask,
+                  prepared.first['mask'] as Uint8List,
                   filename: 'mask.png',
                   contentType: DioMediaType('image', 'png'),
                 ),
@@ -232,13 +279,88 @@ class StudioApi {
           }
           body = form;
         }
-        final response = await dio.postUri(
-          apiUri(config.baseUrl, endpoint),
-          data: body,
-          options: _auth(config),
-          cancelToken: cancelToken,
-        );
+        var async = usesSuixiangTasks(config);
+        if (async &&
+            body is FormData &&
+            body.files.fold<int>(0, (sum, f) => sum + f.value.length) >
+                29 * 1024 * 1024) {
+          throw StudioException('上传副本合计超过接口的 30 MiB 限制，请减少参考图');
+        }
+        Response<dynamic> response;
+        try {
+          response = await dio.postUri(
+            apiUri(config.baseUrl, async ? '$endpoint/async' : endpoint),
+            data: body,
+            options: _auth(config),
+            cancelToken: cancelToken,
+          );
+        } on DioException catch (error) {
+          // Fall back only when the server explicitly says no task was created.
+          // Never resubmit an accepted task or retry a charged generation.
+          if (!async ||
+              !(error.response?.data ?? '').toString().toLowerCase().contains(
+                'async image tasks are not enabled',
+              )) {
+            rethrow;
+          }
+          async = false;
+          onStage?.call('正在通过兼容接口处理');
+          response = await dio.postUri(
+            apiUri(config.baseUrl, endpoint),
+            data: body is FormData ? body.clone() : body,
+            options: _auth(config),
+            cancelToken: cancelToken,
+          );
+        }
         data = response.data;
+        if (async) {
+          final id = data is Map ? data['id']?.toString() : null;
+          if (id == null || !RegExp(r'^[A-Za-z0-9_-]{1,200}$').hasMatch(id)) {
+            throw StudioException('异步接口未返回有效任务号，请检查服务商是否已启用异步接口');
+          }
+          final deadline = DateTime.now().add(const Duration(minutes: 8));
+          while (true) {
+            if (cancelToken?.isCancelled == true) {
+              throw cancelToken!.cancelError!;
+            }
+            if (DateTime.now().isAfter(deadline)) {
+              throw StudioException('任务等待超时，服务端可能仍在处理；请到服务商控制台查询，避免重复扣费');
+            }
+            onStage?.call('模型正在处理，请稍候');
+            await Future.any<void>([
+              Future<void>.delayed(pollInterval),
+              if (cancelToken != null)
+                cancelToken.whenCancel.then<void>((e) => throw e),
+            ]);
+            final poll = await dio.getUri(
+              apiUri(config.baseUrl, 'images/tasks/$id'),
+              options: _auth(config),
+              cancelToken: cancelToken,
+            );
+            final task = poll.data as Map;
+            if (task['status'] == 'failed' || task['status'] == 'cancelled') {
+              final error = task['error'];
+              throw StudioException(
+                error is Map
+                    ? (error['message'] ?? '图片任务失败').toString()
+                    : (error ?? '图片任务失败').toString(),
+              );
+            }
+            if (task['status'] == 'completed') {
+              data = task['result'] is Map
+                  ? Map<String, dynamic>.from(task['result'])
+                  : {
+                      'data': [
+                        {'url': task['image_url']},
+                      ],
+                    };
+              if (task['usage'] is Map && data['usage'] == null) {
+                data['usage'] = task['usage'];
+              }
+              break;
+            }
+          }
+        }
       }
       if (data is! Map) {
         throw StudioException('接口未返回 JSON 图片响应，请检查协议设置');
@@ -246,6 +368,7 @@ class StudioApi {
       if (data['usage'] is Map) {
         usage = Map<String, dynamic>.from(data['usage']);
       }
+      onStage?.call('正在接收处理结果');
       final images = await extractImages(
         Map<String, dynamic>.from(data),
         cancelToken,

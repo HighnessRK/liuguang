@@ -173,7 +173,7 @@ class _AssistantScreenState extends State<AssistantScreen> {
                                     ),
                                   ),
                                   const SizedBox(height: 9),
-                                  SelectableText(
+                                  StudioSelectable(
                                     message.text,
                                     style: TextStyle(
                                       color: user

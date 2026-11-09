@@ -7,8 +7,13 @@ import 'package:path_provider/path_provider.dart';
 
 import 'store.dart';
 
-const appVersion = '1.0.0';
-const releaseNotes = '''新增：文生图、图生图、多参考图、局部重绘与提示词润色。
+const appVersion = '1.0.1';
+const releaseNotes = '''修复：景深上传体积与同步超时问题，随想接口改用异步任务。
+修复：输入提示重叠、中文编辑菜单与文本选择体验。
+修复：当前版本重复日志及不应出现的下载安装按钮。
+优化：统一任务状态、取消操作、关于页面与控件布局。
+优化：明确画布方向，核对接口实际返回的图片比例。''';
+const previousReleaseNotes = '''新增：文生图、图生图、多参考图、局部重绘与提示词润色。
 新增：实时调色、色彩平衡、裁切、景深增强与 GIF 导出。
 新增：GitHub / Gitee 双源更新、后台检查、更新日志与脱敏诊断日志。
 优化：采用 Flutter_miuix 控件与租房管家同款极光主题。

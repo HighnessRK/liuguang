@@ -34,10 +34,12 @@ try {
     flutter build apk "--$Mode" --no-pub --target-platform android-arm64
     if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
     if ($Mode -eq 'release') {
+        $taskVersion = [regex]::Match((Get-Content pubspec.yaml -Raw), '(?m)^version:\s*([^+\s]+)').Groups[1].Value
+        $taskArtifact = "liuguang-v$taskVersion-arm64.apk"
         New-Item -ItemType Directory -Force dist | Out-Null
-        Copy-Item -LiteralPath build\app\outputs\flutter-apk\app-release.apk -Destination dist\liuguang-v1.0.0-arm64.apk -Force
-        $taskHash = Get-FileHash -LiteralPath dist\liuguang-v1.0.0-arm64.apk -Algorithm SHA256
-        "$($taskHash.Hash)  liuguang-v1.0.0-arm64.apk" | Set-Content -LiteralPath dist\SHA256.txt -Encoding utf8
+        Copy-Item -LiteralPath build\app\outputs\flutter-apk\app-release.apk -Destination "dist\$taskArtifact" -Force
+        $taskHash = Get-FileHash -LiteralPath "dist\$taskArtifact" -Algorithm SHA256
+        "$($taskHash.Hash)  $taskArtifact" | Set-Content -LiteralPath dist\SHA256.txt -Encoding utf8
     }
     if ($Install) {
         $taskInstallApk = (Resolve-Path "build\app\outputs\flutter-apk\app-$Mode.apk").Path

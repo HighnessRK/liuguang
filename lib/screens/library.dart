@@ -448,7 +448,7 @@ class _ArtworkDetailState extends State<ArtworkDetail> {
                 ),
               ),
               Glass(
-                child: SelectableText(
+                child: StudioSelectable(
                   art.prompt,
                   style: const TextStyle(fontSize: 14, height: 1.9),
                 ),

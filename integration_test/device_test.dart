@@ -1,3 +1,6 @@
+import 'package:dio/dio.dart';
+import 'package:liuguang/core/image_transport.dart';
+
 import 'dart:convert';
 import 'dart:io';
 
@@ -14,6 +17,38 @@ import 'package:liuguang/core/models.dart';
 import 'package:liuguang/core/store.dart';
 import 'package:liuguang/main.dart';
 import 'package:liuguang/ui/glass.dart';
+
+class ControlledImageApi extends StudioApi {
+  int calls = 0;
+  ControlledImageApi(super.store);
+  @override
+  Future<ImageReply> generate({
+    required String prompt,
+    required GenerationOptions options,
+    List<String> inputs = const [],
+    Uint8List? mask,
+    CancelToken? cancelToken,
+    String operation = '文生图',
+    void Function(String)? onStage,
+  }) async {
+    calls++;
+    onStage?.call('模型正在处理，请稍候');
+    await cancelToken!.whenCancel;
+    throw cancelToken.cancelError!;
+  }
+}
+
+Uint8List buildLargeFixture(Uint8List bytes) {
+  var source = img.decodeImage(bytes)!;
+  source = img.copyCrop(
+    source,
+    x: 0,
+    y: (source.height - source.width * 9 / 16).round() ~/ 2,
+    width: source.width,
+    height: (source.width * 9 / 16).round(),
+  );
+  return img.encodePng(img.copyResize(source, width: 7680, height: 4320));
+}
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
@@ -137,7 +172,8 @@ void main() {
       await saveToGallery(gifPath);
       expect(img.decodeGif(frames)!.numFrames, 2);
       await LiquidGlass.precache();
-      await tester.pumpWidget(LiuguangApp(store: store));
+      final controlled = ControlledImageApi(store);
+      await tester.pumpWidget(LiuguangApp(store: store, api: controlled));
       await tester.pumpAndSettle();
       expect(find.text('创作'), findsWidgets);
       expect(tester.takeException(), isNull);
@@ -146,6 +182,32 @@ void main() {
       home.edit(source);
       await tester.pumpAndSettle();
       expect(find.text('修图'), findsWidgets);
+      await tester.tap(find.text('传奇二瞬'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('开始增强'));
+      for (var i = 0; i < 40 && controlled.calls == 0; i++) {
+        await tester.pump(const Duration(milliseconds: 150));
+      }
+      expect(controlled.calls, 1);
+      expect(find.byType(TaskStatusCard), findsOneWidget);
+      expect(find.text('开始增强'), findsNothing);
+      final disabledExport = tester.widget<GlassButton>(
+        find.ancestor(of: find.text('导出'), matching: find.byType(GlassButton)),
+      );
+      expect(disabledExport.onTap, isNull);
+      await tester.tap(find.text('传奇二瞬'));
+      await tester.pump(const Duration(milliseconds: 150));
+      expect(controlled.calls, 1);
+      await tester.tap(find.text('取消任务'));
+      for (
+        var i = 0;
+        i < 40 && find.byType(TaskStatusCard).evaluate().isNotEmpty;
+        i++
+      ) {
+        await tester.pump(const Duration(milliseconds: 150));
+      }
+      expect(find.byType(TaskStatusCard), findsNothing);
+      expect(find.text('开始增强'), findsOneWidget);
       await tester.tap(find.text('色彩平衡'));
       await tester.pumpAndSettle();
       final preview = find.byKey(const Key('editor-preview'));
@@ -207,4 +269,75 @@ void main() {
       await temporary.delete(recursive: true);
     }
   }, timeout: const Timeout(Duration(minutes: 4)));
+  if (const bool.fromEnvironment('LIVE_PROVIDER_TEST')) {
+    testWidgets(
+      'live configured provider: portrait generation and 8K-source edit',
+      (tester) async {
+        final live = AppStore();
+        await live.init();
+        expect(live.imageApi.ready, isTrue, reason: '手机内须已保存可用的生图配置');
+        expect(live.imageApi.model, 'gpt-image-2.6-sunburst');
+        final api = StudioApi(live);
+        String last = '';
+        void stage(String value) {
+          if (value != last) {
+            debugPrint('LIVE_PROVIDER_STAGE $value');
+            last = value;
+          }
+        }
+
+        final portrait = await api.generate(
+          prompt: '一张3:4竖幅的自然山景照片，湖泊与远山，天空在上方，构图完整，无文字。',
+          options: GenerationOptions(width: 768, height: 1024, quality: 'low'),
+          operation: 'V1.0.1 竖幅验证',
+          onStage: stage,
+        );
+        final first = await saveArtwork(
+          live,
+          portrait.images.first,
+          prompt: 'V1.0.1 竖幅验证示例',
+          model: live.imageApi.model,
+          kind: '验证示例',
+        );
+        debugPrint('LIVE_PROVIDER_PORTRAIT ${first.width}x${first.height}');
+        expect(
+          matchesRequestedAspect(first.width, first.height, 768, 1024),
+          isTrue,
+          reason: '服务端须实际返回3:4，客户端不旋转、裁切或拉伸来掩盖错误',
+        );
+        final asset = (await rootBundle.load('assets/mountain.jpg')).buffer
+            .asUint8List();
+        final large = await compute(buildLargeFixture, asset);
+        final path = await live.writeImage(large, 'png');
+        try {
+          final edited = await api.generate(
+            prompt: lensPrompt,
+            options: GenerationOptions(
+              width: 1024,
+              height: 576,
+              quality: 'low',
+            ),
+            inputs: [path],
+            operation: 'V1.0.1 大图景深验证',
+            onStage: stage,
+          );
+          final art = await saveArtwork(
+            live,
+            edited.images.first,
+            prompt: 'V1.0.1 大图景深验证示例',
+            model: live.imageApi.model,
+            kind: '验证示例',
+          );
+          debugPrint('LIVE_PROVIDER_EDIT ${art.width}x${art.height}');
+          expect(
+            matchesRequestedAspect(art.width, art.height, 1024, 576),
+            isTrue,
+          );
+        } finally {
+          await File(path).delete();
+        }
+      },
+      timeout: const Timeout(Duration(minutes: 12)),
+    );
+  }
 }

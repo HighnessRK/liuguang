@@ -7,6 +7,7 @@ import '../ui/glass.dart';
 import 'create.dart';
 import 'usage.dart';
 import 'updates.dart';
+import '../core/updates.dart' show appVersion;
 
 class SettingsScreen extends StatelessWidget {
   final AppStore store;
@@ -96,17 +97,10 @@ class SettingsScreen extends StatelessWidget {
               context,
               Icons.info_outline_rounded,
               '关于琉光',
-              'V1.0.0',
+              'V$appVersion',
               () => open(
                 context,
-                const SettingsDetail(
-                  title: '关于琉光',
-                  children: [
-                    AboutStudio(),
-                    SizedBox(height: 24),
-                    PrivacyInfo(),
-                  ],
-                ),
+                const SettingsDetail(title: '关于琉光', children: [AboutStudio()]),
               ),
             ),
           ],
@@ -630,7 +624,7 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
               ),
               if ((isImage ? imageStatus : chatStatus) != null) ...[
                 const SizedBox(height: 12),
-                SelectableText(
+                StudioSelectable(
                   (isImage ? imageStatus : chatStatus)!,
                   style: TextStyle(
                     fontSize: 12,
@@ -887,28 +881,88 @@ class AboutStudio extends StatelessWidget {
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
+      const SizedBox(height: 20),
+      Center(
+        child: Container(
+          width: 82,
+          height: 82,
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [accent(context), const Color(0xff8a6bff)],
+            ),
+            borderRadius: BorderRadius.circular(24),
+          ),
+          child: const Icon(
+            Icons.auto_awesome_rounded,
+            size: 42,
+            color: Colors.white,
+          ),
+        ),
+      ),
+      const SizedBox(height: 18),
       const Text(
-        '琉光  V1.0.0',
-        style: TextStyle(fontSize: 24, fontWeight: FontWeight.w600),
+        '琉光',
+        textAlign: TextAlign.center,
+        style: TextStyle(fontSize: 28, fontWeight: FontWeight.w600),
+      ),
+      const SizedBox(height: 8),
+      Text(
+        'V$appVersion',
+        textAlign: TextAlign.center,
+        style: TextStyle(fontSize: 12, color: muted(context)),
       ),
       const SizedBox(height: 10),
       Text(
-        'AI 影像创作与修图，连接你自己的模型。',
-        style: TextStyle(fontSize: 14, color: muted(context), height: 1.9),
+        '让灵感成像',
+        textAlign: TextAlign.center,
+        style: TextStyle(fontSize: 14, color: muted(context)),
       ),
-      const SectionLabel('开源致谢'),
-      const SelectableText(
-        '实时玻璃 · Liquid Glass Renderer 1.0.0-dev.2 · Apache-2.0\nhttps://pub.dev/packages/liquid_glass_renderer\n\n设计参考 · Miuix KMP · Apache-2.0\nhttps://github.com/compose-miuix-ui/miuix\n\n设计参考 · Liquid-Glass-Android · MIT\nhttps://github.com/QWEA0/Liquid-Glass-Android\n\n示例照片 · Unsplash\nhttps://images.unsplash.com/photo-1464822759023-fed622ff2c3b',
-        style: TextStyle(fontSize: 12, height: 1.9),
-      ),
-      const SizedBox(height: 18),
-      GlassButton(
-        '查看全部软件许可',
-        small: true,
-        onTap: () => showLicensePage(
-          context: context,
-          applicationName: '琉光',
-          applicationVersion: 'V1.0.0',
+      const SizedBox(height: 32),
+      Glass(
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 2),
+        child: Column(
+          children: [
+            settingRow(
+              context,
+              Icons.system_update_rounded,
+              '应用更新',
+              '版本与更新记录',
+              () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => UpdatesScreen(store: StudioScope.of(context)),
+                ),
+              ),
+            ),
+            _line(context),
+            settingRow(
+              context,
+              Icons.shield_outlined,
+              '隐私与数据',
+              '本机存储与模型请求',
+              () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const SettingsDetail(
+                    title: '隐私与数据',
+                    children: [PrivacyInfo()],
+                  ),
+                ),
+              ),
+            ),
+            _line(context),
+            settingRow(
+              context,
+              Icons.code_rounded,
+              '开源许可',
+              '感谢开源社区',
+              () => showLicensePage(
+                context: context,
+                applicationName: '琉光',
+                applicationVersion: 'V$appVersion',
+              ),
+            ),
+          ],
         ),
       ),
     ],
@@ -926,7 +980,7 @@ class PrivacyInfo extends StatelessWidget {
         style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
       ),
       const SizedBox(height: 18),
-      const SelectableText(
+      const StudioSelectable(
         'API Key 使用 Android Keystore 加密保存在本机，不写入作品、统计和导出文件。\n\n本地调色、裁切、GIF 合成与本地虚化不上传照片。执行生成、云端编辑、景深增强或对话时，仅向你配置的服务发送所需提示词与图片。\n\n作品和对话记录保存在应用私有目录。卸载会删除本机数据，请先保存重要作品到系统相册。应用不含广告和遥测 SDK。\n\n费用为本机按自定义单价估算，不等于服务端账单。审核偏好不能覆盖服务端政策。',
         style: TextStyle(fontSize: 14, height: 1.9),
       ),

@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:flutter_localizations/flutter_localizations.dart';
+
 import 'package:flutter_miuix/miuix.dart' as mx;
 import 'package:liquid_glass_renderer/liquid_glass_renderer.dart';
 
@@ -58,7 +60,8 @@ Future<void> main() async {
 
 class LiuguangApp extends StatelessWidget {
   final AppStore store;
-  const LiuguangApp({super.key, required this.store});
+  final StudioApi? api;
+  const LiuguangApp({super.key, required this.store, this.api});
   @override
   Widget build(BuildContext context) => StudioScope(
     store: store,
@@ -66,6 +69,9 @@ class LiuguangApp extends StatelessWidget {
       listenable: store,
       builder: (context, _) => MaterialApp(
         title: '琉光',
+        locale: const Locale('zh', 'CN'),
+        supportedLocales: const [Locale('zh', 'CN'), Locale('en', 'US')],
+        localizationsDelegates: GlobalMaterialLocalizations.delegates,
         debugShowCheckedModeBanner: false,
         scrollBehavior: const StudioScrollBehavior(),
         themeMode: switch (store.theme) {
@@ -103,7 +109,7 @@ class LiuguangApp extends StatelessWidget {
             ),
           ),
         ),
-        home: StudioHome(store: store),
+        home: StudioHome(store: store, api: api),
       ),
     ),
   );
@@ -118,6 +124,11 @@ class LiuguangApp extends StatelessWidget {
       brightness: brightness,
     ),
 
+    textSelectionTheme: TextSelectionThemeData(
+      cursorColor: Color(store.accent),
+      selectionColor: Color(store.accent).withValues(alpha: .2),
+      selectionHandleColor: Color(store.accent),
+    ),
     splashFactory: NoSplash.splashFactory,
     highlightColor: Colors.transparent,
     hoverColor: Colors.transparent,
@@ -160,7 +171,8 @@ mx.MiuixThemeData studioMiuixTheme(BuildContext context, AppStore store) {
 
 class StudioHome extends StatefulWidget {
   final AppStore store;
-  const StudioHome({super.key, required this.store});
+  final StudioApi? api;
+  const StudioHome({super.key, required this.store, this.api});
   @override
   State<StudioHome> createState() => _StudioHomeState();
 }
@@ -190,7 +202,7 @@ class _StudioHomeState extends State<StudioHome> with WidgetsBindingObserver {
 
   int index = 0, editorRevision = 0;
   String? editorPath, reusedPrompt;
-  late final StudioApi api = StudioApi(widget.store);
+  late final StudioApi api = widget.api ?? StudioApi(widget.store);
   @override
   void initState() {
     super.initState();

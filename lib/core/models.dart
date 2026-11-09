@@ -46,6 +46,14 @@ class EndpointConfig {
   EndpointConfig snapshot() => EndpointConfig.fromJson(toJson())..key = key;
 }
 
+GenerationOptions photoOutputOptions(int width, int height) {
+  final scale = 1024 / (width > height ? width : height);
+  return GenerationOptions(
+    width: ((width * scale / 16).round() * 16).clamp(64, 8192),
+    height: ((height * scale / 16).round() * 16).clamp(64, 8192),
+  );
+}
+
 class GenerationOptions {
   int width, height, count, compression;
   String quality, format, moderation;

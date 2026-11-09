@@ -50,7 +50,7 @@ object UpdateScheduler {
             val best = releases.filter { !it.optBoolean("draft") && !it.optBoolean("prerelease") }
                 .maxWithOrNull { a,b -> compare(a.optString("tag_name"), b.optString("tag_name")) } ?: return
             val tag = best.optString("tag_name")
-            if (compare(tag, prefs.getString("version", "1.0.0")!!) <= 0 || !prefs.getBoolean("notify", true) || prefs.getString("notified", "") == tag) return
+            if (compare(tag, (context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "1.0.1")) <= 0 || !prefs.getBoolean("notify", true) || prefs.getString("notified", "") == tag) return
             val manager = context.getSystemService(NotificationManager::class.java)
             if (!manager.areNotificationsEnabled()) return
             manager.createNotificationChannel(NotificationChannel("updates", "应用更新", NotificationManager.IMPORTANCE_DEFAULT))

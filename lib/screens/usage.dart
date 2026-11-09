@@ -238,7 +238,7 @@ class _UsageScreenState extends State<UsageScreen> {
                             ),
                           ),
                           const SizedBox(height: 16),
-                          SelectableText(
+                          StudioSelectable(
                             '模型：${r.model}\n时间：${r.time.toLocal()}\n耗时：${r.milliseconds} ms\n输入 Token：${r.inputTokens ?? '服务端未返回'}\n输出 Token：${r.outputTokens ?? '服务端未返回'}\n图片：${r.images}\n估算 USD：${r.estimatedCost?.toStringAsFixed(6) ?? '未设置单价或无用量'}${r.error == null ? '' : '\n错误：${r.error}'}',
                             style: const TextStyle(fontSize: 14, height: 1.9),
                           ),

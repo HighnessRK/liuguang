@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -57,6 +58,25 @@ class _EditorScreenState extends State<EditorScreen> {
       loading = false,
       feather = true;
   String activity = '';
+  bool manualLens = false;
+  int taskSeconds = 0;
+  Timer? taskTicker;
+  void beginTask(String stage) {
+    taskTicker?.cancel();
+    setState(() {
+      busy = true;
+      activity = stage;
+      taskSeconds = 0;
+    });
+    taskTicker = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted || !busy) {
+        taskTicker?.cancel();
+        return;
+      }
+      setState(() => taskSeconds++);
+    });
+  }
+
   CancelToken? token;
   final editPrompt = TextEditingController();
   List<_Stroke> strokes = [];
@@ -83,7 +103,7 @@ class _EditorScreenState extends State<EditorScreen> {
     if (widget.initialPath != null) {
       await load(widget.initialPath!);
     }
-    if (Platform.isAndroid) {
+    if (Platform.isAndroid && widget.initialPath == null) {
       try {
         final lost = await ImagePicker().retrieveLostData();
         if (!lost.isEmpty && lost.files?.isNotEmpty == true && mounted) {
@@ -181,6 +201,7 @@ class _EditorScreenState extends State<EditorScreen> {
   @override
   void dispose() {
     token?.cancel();
+    taskTicker?.cancel();
     image?.dispose();
     shader?.dispose();
     editPrompt.dispose();
@@ -198,10 +219,7 @@ class _EditorScreenState extends State<EditorScreen> {
     if (choice == null || !mounted) {
       return;
     }
-    setState(() {
-      busy = true;
-      activity = '正在导出原始分辨率…';
-    });
+    beginTask('正在导出原始分辨率…');
     try {
       final result = await renderEdited(
         path!,
@@ -228,6 +246,7 @@ class _EditorScreenState extends State<EditorScreen> {
       }
     } finally {
       if (mounted) {
+        taskTicker?.cancel();
         setState(() => busy = false);
       }
     }
@@ -241,10 +260,7 @@ class _EditorScreenState extends State<EditorScreen> {
     if (path == null || busy) {
       return;
     }
-    setState(() {
-      busy = true;
-      activity = '正在处理构图…';
-    });
+    beginTask('正在处理构图…');
     try {
       final result = await renderEdited(
         path!,
@@ -270,6 +286,7 @@ class _EditorScreenState extends State<EditorScreen> {
       }
     } finally {
       if (mounted) {
+        taskTicker?.cancel();
         setState(() => busy = false);
       }
     }
@@ -349,15 +366,23 @@ class _EditorScreenState extends State<EditorScreen> {
       toast(context, '请描述选区需要怎样修改');
       return;
     }
+    FocusManager.instance.primaryFocus?.unfocus();
     final model = widget.store.imageApi.model;
-    setState(() {
-      busy = true;
-      activity = lens ? '正在分析光影与空间层次…' : '正在重新生成选区…';
-    });
+    beginTask(lens ? '正在准备增强副本' : '正在准备选区');
     token = CancelToken();
     try {
-      final normalized = await renderEdited(path!, a);
-      final source = await widget.store.writeImage(normalized['bytes'], 'png');
+      final normalized = await renderEdited(
+        path!,
+        a,
+        maxEdge: lens ? 2048 : null,
+        format: lens ? 'jpeg' : 'png',
+        quality: 92,
+      );
+      if (token!.isCancelled) throw token!.cancelError!;
+      final source = await widget.store.writeImage(
+        normalized['bytes'],
+        imageExtension(normalized['bytes']),
+      );
       final mask = lens ? null : await maskBytes();
       final instruction = lens
           ? '$lensPrompt\n影调风格：自然电影感，细腻层次，克制的色彩。'
@@ -365,8 +390,18 @@ class _EditorScreenState extends State<EditorScreen> {
       final response = await widget.api.generate(
         prompt: instruction,
         options: GenerationOptions(
-          width: cloudOptions?.width ?? normalized['width'],
-          height: cloudOptions?.height ?? normalized['height'],
+          width:
+              cloudOptions?.width ??
+              photoOutputOptions(
+                normalized['width'],
+                normalized['height'],
+              ).width,
+          height:
+              cloudOptions?.height ??
+              photoOutputOptions(
+                normalized['width'],
+                normalized['height'],
+              ).height,
           count: 1,
           quality: cloudOptions?.quality ?? 'high',
           format: 'png',
@@ -377,6 +412,9 @@ class _EditorScreenState extends State<EditorScreen> {
         mask: mask,
         cancelToken: token,
         operation: lens ? '云端景深增强' : '局部修图',
+        onStage: (stage) {
+          if (mounted && activity != stage) setState(() => activity = stage);
+        },
       );
       Uint8List result = response.images.first;
       if (mask != null) {
@@ -386,6 +424,8 @@ class _EditorScreenState extends State<EditorScreen> {
           'mask': mask,
         });
       }
+      if (token?.isCancelled == true) throw token!.cancelError!;
+      if (mounted) setState(() => activity = '正在保存结果');
       final art = await saveArtwork(
         widget.store,
         result,
@@ -409,6 +449,7 @@ class _EditorScreenState extends State<EditorScreen> {
     } finally {
       token = null;
       if (mounted) {
+        taskTicker?.cancel();
         setState(() => busy = false);
       }
     }
@@ -418,10 +459,7 @@ class _EditorScreenState extends State<EditorScreen> {
     if (path == null || busy) {
       return;
     }
-    setState(() {
-      busy = true;
-      activity = '正在柔化离焦区域…';
-    });
+    beginTask('正在柔化离焦区域…');
     try {
       final normalized = await renderEdited(path!, a);
       final bytes = await compute(localBokeh, {
@@ -443,6 +481,7 @@ class _EditorScreenState extends State<EditorScreen> {
       }
     } finally {
       if (mounted) {
+        taskTicker?.cancel();
         setState(() => busy = false);
       }
     }
@@ -473,7 +512,7 @@ class _EditorScreenState extends State<EditorScreen> {
       action: GlassIcon(
         Icons.add_photo_alternate_outlined,
         tooltip: '导入图片',
-        onTap: pick,
+        onTap: busy ? null : pick,
       ),
     );
     if (image == null) {
@@ -491,7 +530,7 @@ class _EditorScreenState extends State<EditorScreen> {
                   '从相册导入',
                   primary: true,
                   icon: Icons.add_rounded,
-                  onTap: pick,
+                  onTap: busy ? null : pick,
                 ),
                 const SizedBox(height: 14),
                 GlassButton(
@@ -537,13 +576,13 @@ class _EditorScreenState extends State<EditorScreen> {
                 GlassIcon(
                   Icons.undo_rounded,
                   tooltip: '撤销',
-                  onTap: () => restore(false),
+                  onTap: busy || undo.isEmpty ? null : () => restore(false),
                 ),
                 const SizedBox(width: 8),
                 GlassIcon(
                   Icons.redo_rounded,
                   tooltip: '重做',
-                  onTap: () => restore(true),
+                  onTap: busy || redo.isEmpty ? null : () => restore(true),
                 ),
                 const Spacer(),
                 GlassButton(
@@ -616,34 +655,28 @@ class _EditorScreenState extends State<EditorScreen> {
                   padding: const EdgeInsets.fromLTRB(24, 0, 24, 112),
                   children: [
                     if (busy)
-                      Glass(
-                        child: Column(
-                          children: [
-                            const LinearProgressIndicator(minHeight: 2),
-                            const SizedBox(height: 12),
-                            Text(
-                              activity,
-                              style: const TextStyle(fontSize: 14),
-                            ),
-                            if (token != null)
-                              GlassButton(
-                                '取消云端请求',
-                                small: true,
-                                onTap: () => token?.cancel(),
-                              ),
-                          ],
-                        ),
+                      TaskStatusCard(
+                        title: token != null ? 'AI 正在处理' : '正在处理照片',
+                        stage: activity,
+                        seconds: taskSeconds,
+                        onCancel: token == null || token!.isCancelled
+                            ? null
+                            : () {
+                                token?.cancel();
+                                setState(() => activity = '正在取消任务');
+                              },
+                      )
+                    else
+                      IgnorePointer(
+                        ignoring: busy,
+                        child: switch (tool) {
+                          0 => adjustmentControls(),
+                          1 => balanceControls(),
+                          2 => cropControls(),
+                          3 => maskControls(),
+                          _ => lensControls(),
+                        },
                       ),
-                    IgnorePointer(
-                      ignoring: busy,
-                      child: switch (tool) {
-                        0 => adjustmentControls(),
-                        1 => balanceControls(),
-                        2 => cropControls(),
-                        3 => maskControls(),
-                        _ => lensControls(),
-                      },
-                    ),
                     const SizedBox(height: 16),
                     Text(
                       '修改以副本保存，原图保留。',
@@ -685,7 +718,7 @@ class _EditorScreenState extends State<EditorScreen> {
                       height: h,
                       child: GestureDetector(
                         behavior: HitTestBehavior.opaque,
-                        onTapDown: tool == 4 && !busy
+                        onTapDown: tool == 4 && manualLens && !busy
                             ? (d) => setState(() {
                                 focusX = (d.localPosition.dx / w).clamp(0, 1);
                                 focusY = (d.localPosition.dy / h).clamp(0, 1);
@@ -755,7 +788,7 @@ class _EditorScreenState extends State<EditorScreen> {
                             shader,
                           ),
                           foregroundPainter: _OverlayPainter(
-                            tool,
+                            tool == 4 && !manualLens ? -1 : tool,
                             strokes,
                             crop,
                             Offset(focusX, focusY),
@@ -844,7 +877,7 @@ class _EditorScreenState extends State<EditorScreen> {
             ),
             const SizedBox(height: 13),
             SizedBox(
-              height: 90,
+              height: 76 + MediaQuery.textScalerOf(context).scale(18),
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
                 itemCount: adjustmentNames.length,
@@ -853,7 +886,10 @@ class _EditorScreenState extends State<EditorScreen> {
                   behavior: HitTestBehavior.opaque,
                   onTap: () => setState(() => adjustment = i),
                   child: SizedBox(
-                    width: 57,
+                    width: math.max(
+                      72,
+                      MediaQuery.textScalerOf(context).scale(60),
+                    ),
                     child: Column(
                       children: [
                         Glass(
@@ -871,6 +907,7 @@ class _EditorScreenState extends State<EditorScreen> {
                         const SizedBox(height: 9),
                         Text(
                           adjustmentNames[i],
+                          maxLines: 1,
                           style: TextStyle(
                             fontSize: 12,
                             color: i == adjustment
@@ -1057,8 +1094,8 @@ class _EditorScreenState extends State<EditorScreen> {
     padding: const EdgeInsets.only(top: 12),
     child: GlassButton(
       cloudOptions == null
-          ? '云端输出规格 · 跟随原图'
-          : '云端输出 · ${cloudOptions!.displaySize}',
+          ? '输出规格 · 自动 1K'
+          : '输出规格 · ${cloudOptions!.resolution} · ${cloudOptions!.aspectLabel}',
       small: true,
       icon: Icons.aspect_ratio_rounded,
       onTap: () async {
@@ -1166,7 +1203,7 @@ class _EditorScreenState extends State<EditorScreen> {
           '重新生成选区',
           primary: true,
           icon: Icons.auto_awesome_rounded,
-          onTap: () => cloudEdit(),
+          onTap: busy ? null : () => cloudEdit(),
         ),
         cloudSpecifications(),
         const SizedBox(height: 12),
@@ -1183,63 +1220,59 @@ class _EditorScreenState extends State<EditorScreen> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const Text(
-          '传奇二瞬 · 景深增强',
+          '传奇二瞬',
           style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
         ),
-        const SizedBox(height: 13),
-        const SectionLabel('云端光学景深', caption: '大模型影像增强'),
-        Text(
-          '将原分辨率 PNG 副本发送到你配置的生图模型，请求空间层次推断、自然焦外过渡和电影影调。结果取决于模型能力，可撤销并与原图对比。',
-          style: TextStyle(fontSize: 14, color: muted(context), height: 1.8),
-        ),
-        const SizedBox(height: 18),
-        GlassButton(
-          '开启传奇二瞬',
-          primary: true,
-          icon: Icons.auto_awesome_rounded,
-          onTap: () => cloudEdit(lens: true),
-        ),
-        cloudSpecifications(),
-        const SizedBox(height: 13),
-        Text(
-          '独立实现的影像工作流，不包含小米或徕卡专有算法；模型处理无法保证像素无损。',
-          style: TextStyle(fontSize: 12, height: 1.8, color: muted(context)),
-        ),
-        const SizedBox(height: 24),
-        Text(
-          '本地焦点虚化',
-          style: TextStyle(
-            fontSize: 14,
-            color: accentInk(context),
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        const SizedBox(height: 7),
-        Text(
-          '点击图片选择焦点。以渐进虚化模拟浅景深，适合手动调整；此模式不使用深度模型。',
-          style: TextStyle(fontSize: 12, color: muted(context), height: 1.7),
-        ),
         const SizedBox(height: 16),
-        GlassSlider(
-          value: focusRadius,
-          min: .08,
-          max: .65,
-          label: '清晰范围',
-          onChanged: (v) => setState(() => focusRadius = v),
+        GlassSegments(
+          labels: const ['AI 增强', '手动虚化'],
+          selected: manualLens ? 1 : 0,
+          onChanged: busy ? (_) {} : (i) => setState(() => manualLens = i == 1),
         ),
-        GlassSlider(
-          value: bokehStrength,
-          min: .05,
-          max: 1,
-          label: '虚化强度',
-          onChanged: (v) => setState(() => bokehStrength = v),
-        ),
-        GlassButton(
-          '应用本地虚化',
-          small: true,
-          icon: Icons.blur_circular_rounded,
-          onTap: applyBokeh,
-        ),
+        const SizedBox(height: 20),
+        if (!manualLens) ...[
+          Text(
+            '自然景深 · 细腻影调',
+            style: TextStyle(fontSize: 14, color: muted(context)),
+          ),
+          const SizedBox(height: 18),
+          GlassButton(
+            '开始增强',
+            primary: true,
+            icon: Icons.auto_awesome_rounded,
+            onTap: busy ? null : () => cloudEdit(lens: true),
+          ),
+          const SizedBox(height: 12),
+          cloudSpecifications(),
+          const SizedBox(height: 12),
+          Text(
+            '上传兼容尺寸的处理副本，原图保留。',
+            style: TextStyle(fontSize: 12, color: muted(context)),
+          ),
+        ] else ...[
+          Text(
+            '点选照片中的焦点，实时查看清晰范围。',
+            style: TextStyle(fontSize: 14, color: muted(context)),
+          ),
+          const SizedBox(height: 18),
+          GlassSlider(
+            value: focusRadius,
+            min: .08,
+            max: .65,
+            label: '清晰范围',
+            onChanged: (v) => setState(() => focusRadius = v),
+          ),
+          const SizedBox(height: 12),
+          GlassSlider(
+            value: bokehStrength,
+            min: .05,
+            max: 1,
+            label: '虚化强度',
+            onChanged: (v) => setState(() => bokehStrength = v),
+          ),
+          const SizedBox(height: 18),
+          GlassButton('应用虚化', primary: true, onTap: busy ? null : applyBokeh),
+        ],
       ],
     ),
   );

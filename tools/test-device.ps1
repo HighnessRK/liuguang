@@ -1,4 +1,4 @@
-param([string]$Device = '')
+param([string]$Device = '', [switch]$LiveProvider)
 $ErrorActionPreference = 'Stop'
 $taskRoot = Split-Path -Parent $PSScriptRoot
 $taskAdb = Join-Path $env:LOCALAPPDATA 'Android\Sdk\platform-tools\adb.exe'
@@ -11,12 +11,12 @@ $taskCache = Join-Path $taskRoot 'tools\.cache'
 New-Item -ItemType Directory -Force $taskCache | Out-Null
 $taskFlutter = (Get-Command flutter.bat).Source
 $taskLog = Join-Path $taskCache 'device-test-final.log'
-$taskJob = Start-Job -ArgumentList $taskRoot,$taskFlutter,$Device,$taskLog -ScriptBlock {
-    param($root,$flutter,$device,$log)
+$taskJob = Start-Job -ArgumentList $taskRoot,$taskFlutter,$Device,$taskLog,$LiveProvider.IsPresent -ScriptBlock {
+    param($root,$flutter,$device,$log,$live)
     Set-Location -LiteralPath $root
     # The caller supplies an ASCII drive mapping for Flutter's Android tools.
     $env:PUB_HOSTED_URL = 'https://pub.dev'
-    & $flutter test --no-pub integration_test/device_test.dart -d $device *> $log
+    & $flutter test --no-pub integration_test/device_test.dart -d $device "--dart-define=LIVE_PROVIDER_TEST=$($live.ToString().ToLower())" *> $log
     return $LASTEXITCODE
 }
 $taskConfirmed = $false

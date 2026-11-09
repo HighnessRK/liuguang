@@ -5,6 +5,8 @@ import 'package:flutter_miuix/miuix.dart' as mx;
 import 'package:liquid_glass_renderer/liquid_glass_renderer.dart' as lgr;
 
 import '../core/store.dart';
+import 'editable.dart';
+export 'editable.dart' show StudioSelectable;
 
 class StudioScope extends InheritedNotifier<AppStore> {
   const StudioScope({super.key, required AppStore store, required super.child})
@@ -224,7 +226,7 @@ class GlassButton extends StatelessWidget {
 class GlassIcon extends StatelessWidget {
   final IconData icon;
   final String tooltip;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
   const GlassIcon(
     this.icon, {
     super.key,
@@ -269,19 +271,15 @@ class GlassField extends StatelessWidget {
     this.suffix,
   });
   @override
-  Widget build(BuildContext context) => mx.MiuixTextField(
+  Widget build(BuildContext context) => StudioEditable(
     controller: controller,
-    label: hint,
-    useLabelAsPlaceholder: true,
-    obscureText: obscure,
-    singleLine: maxLines == 1 || obscure,
+    hint: hint,
     minLines: minLines,
     maxLines: maxLines,
-    keyboardType: keyboard,
+    obscure: obscure,
+    keyboard: keyboard,
     onChanged: onChanged,
-    trailingIcon: suffix,
-    textStyle: TextStyle(fontSize: 14, color: ink(context)),
-    cornerRadius: 16,
+    suffix: suffix,
   );
 }
 
@@ -439,6 +437,76 @@ class GlassToggle extends StatelessWidget {
       mx.MiuixSwitch(value: value, onChanged: onChanged);
 }
 
+class TaskStatusCard extends StatelessWidget {
+  final String title, stage;
+  final int seconds;
+  final VoidCallback? onCancel;
+  const TaskStatusCard({
+    super.key,
+    required this.title,
+    required this.stage,
+    required this.seconds,
+    this.onCancel,
+  });
+  @override
+  Widget build(BuildContext context) => Glass(
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: 22,
+              height: 22,
+              child: CircularProgressIndicator(
+                strokeWidth: 2.5,
+                color: accent(context),
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    stage,
+                    style: TextStyle(
+                      fontSize: 14,
+                      height: 1.5,
+                      color: muted(context),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 20),
+        Row(
+          children: [
+            Text(
+              '已用时 $seconds 秒',
+              style: TextStyle(fontSize: 12, color: muted(context)),
+            ),
+            const Spacer(),
+            if (onCancel != null)
+              GlassButton('取消任务', small: true, onTap: onCancel),
+          ],
+        ),
+      ],
+    ),
+  );
+}
+
 class PageHeader extends StatelessWidget {
   final String title;
   final Widget? action;
@@ -539,7 +607,35 @@ void toast(BuildContext context, String text) {
   ScaffoldMessenger.of(context).hideCurrentSnackBar();
   ScaffoldMessenger.of(context).showSnackBar(
     SnackBar(
-      content: Text(text),
+      backgroundColor: Colors.transparent,
+      elevation: 0,
+      padding: EdgeInsets.zero,
+      content: Glass(
+        radius: 20,
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+        child: Row(
+          children: [
+            Icon(
+              Icons.info_outline_rounded,
+              color: accentInk(context),
+              size: 20,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                text,
+                maxLines: 4,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 14,
+                  height: 1.5,
+                  color: ink(context),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
       behavior: SnackBarBehavior.floating,
       margin: EdgeInsets.fromLTRB(
         16,

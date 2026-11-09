@@ -159,6 +159,16 @@ Map<String, dynamic> processImage(Map<String, dynamic> job) {
     throw StudioException('图片超过 4800 万像素，请先缩小');
   }
   source = img.bakeOrientation(source);
+  final edge = job['maxEdge'] as int?;
+  if (edge != null && (source.width > edge || source.height > edge)) {
+    final scale = edge / math.max(source.width, source.height);
+    source = img.copyResize(
+      source,
+      width: (source.width * scale).round(),
+      height: (source.height * scale).round(),
+      interpolation: img.Interpolation.average,
+    );
+  }
   final a = Adjustments.fromJson(job['adjustments']);
   if (!a.isEmpty) {
     final original = a.values[11] != 0 ? source.clone() : null;
@@ -236,6 +246,7 @@ Future<Map<String, dynamic>> renderEdited(
   List<double>? crop,
   int rotation = 0,
   bool flip = false,
+  int? maxEdge,
 }) async {
   final result = await compute(processImage, {
     'bytes': await File(path).readAsBytes(),
@@ -245,6 +256,7 @@ Future<Map<String, dynamic>> renderEdited(
     'crop': crop,
     'rotation': rotation,
     'flip': flip,
+    'maxEdge': maxEdge,
   });
   if (format == 'webp') {
     result['bytes'] = await native.invokeMethod<Uint8List>('encodeWebp', {

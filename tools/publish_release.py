@@ -5,6 +5,8 @@ import argparse,base64,json,os,re,subprocess,sys
 from pathlib import Path
 import requests
 ROOT=Path(__file__).resolve().parents[1]
+VERSION=re.search(r'^version:\s*([0-9.]+)',(ROOT/'pubspec.yaml').read_text(encoding='utf-8'),re.M).group(1)
+TAG='v'+VERSION
 REPOS={'github':('HighnessRK','liuguang','https://api.github.com'), 'gitee':('highnesssrk','liuguang','https://gitee.com/api/v5')}
 def credentials(path):
     text=Path(path).read_text(encoding='utf-8-sig')
@@ -41,7 +43,7 @@ def github_sync(token):
     if not changes:
         print('GitHub source already current',flush=True);return
     tree=require(s.post(api+'/git/trees',json={'base_tree':commit['tree']['sha'],'tree':changes},timeout=45))
-    new=require(s.post(api+'/git/commits',json={'message':'Update V1.0.0 source and validation','tree':tree['sha'],'parents':[head]},timeout=30))
+    new=require(s.post(api+'/git/commits',json={'message':f'Update V{VERSION} source and validation','tree':tree['sha'],'parents':[head]},timeout=30))
     require(s.patch(api+'/git/refs/heads/main',json={'sha':new['sha'],'force':False},timeout=30))
     print('GitHub source synchronized through Git Data API:',len(changes),'files',flush=True)
 def push(tokens):
@@ -67,7 +69,7 @@ def push(tokens):
         print('Source push complete:',provider,flush=True)
 def release(tokens):
     section=''; entries=[]
-    for line in (ROOT/'CHANGELOG.md').read_text(encoding='utf8').splitlines():
+    for line in (ROOT/'CHANGELOG.md').read_text(encoding='utf8').split('\n## ')[1].splitlines():
         if line.startswith('### '): section=line[4:]
         elif line.startswith('- ') and section in ['新增','优化','修复']: entries.append(section+'：'+line[2:])
     notes='\n'.join(entries)
@@ -75,14 +77,14 @@ def release(tokens):
     for provider,(owner,name,api) in REPOS.items():
         s=session(provider,tokens[provider]);endpoint=f'{api}/repos/{owner}/{name}/releases'
         response=s.get(endpoint,timeout=30);require(response)
-        existing=next((v for v in response.json() if v.get('tag_name')=='v1.0.0'),None)
+        existing=next((v for v in response.json() if v.get('tag_name')==TAG),None)
         body=notes
-        payload={'tag_name':'v1.0.0','target_commitish':'main','name':'琉光 V1.0.0','body':body,'prerelease':False}
+        payload={'tag_name':TAG,'target_commitish':'main','name':f'琉光 V{VERSION}','body':body,'prerelease':False}
         if provider=='github':payload['draft']=True
         print('Preparing release:',provider,flush=True)
         item=existing or require(s.post(endpoint,json=payload,timeout=30) if provider=='github' else s.post(endpoint,data=payload,timeout=30))
         release_id=item['id']
-        for filename in ['liuguang-v1.0.0-arm64.apk','SHA256.txt']:
+        for filename in [f'liuguang-v{VERSION}-arm64.apk','SHA256.txt']:
             path=ROOT/'dist'/filename
             print('Uploading',provider,filename,flush=True)
             if provider=='github':
@@ -106,7 +108,7 @@ def release(tokens):
                     break
         if provider=='github':
             item=require(s.patch(endpoint+f'/{release_id}',json={'draft':False},timeout=30))
-        results[provider]={'id':release_id,'url':item.get('html_url') or f'https://gitee.com/{owner}/{name}/releases/tag/v1.0.0'}
+        results[provider]={'id':release_id,'url':item.get('html_url') or f'https://gitee.com/{owner}/{name}/releases/tag/{TAG}'}
         print('Release prepared:',provider,flush=True)
     (ROOT/'tools/.cache/release-results.json').write_text(json.dumps(results))
 if __name__=='__main__':
