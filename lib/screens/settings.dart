@@ -356,7 +356,7 @@ Widget settingRow(
   behavior: HitTestBehavior.opaque,
   onTap: onTap,
   child: Padding(
-    padding: const EdgeInsets.symmetric(vertical: 17),
+    padding: const EdgeInsets.symmetric(vertical: 12),
     child: Row(
       children: [
         Icon(icon, size: 23, color: accentInk(context)),
@@ -790,7 +790,10 @@ class _ModelPickerState extends State<ModelPicker> {
         .where((s) => s.toLowerCase().contains(query.toLowerCase()))
         .toList();
     return SizedBox(
-      height: MediaQuery.sizeOf(context).height * .65,
+      height: (180.0 + list.length * 56).clamp(
+        220.0,
+        MediaQuery.sizeOf(context).height * .65,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -1003,11 +1006,11 @@ class PrivacyInfo extends StatelessWidget {
           '密钥只留本机',
           'API Key 由 Android Keystore 加密保存，不写入作品、使用明细或导出文件。',
         ),
-        (Icons.photo_outlined, '本地处理，无需上传', '调色、裁切、GIF、本地虚化与人像美化均在手机完成。'),
+        (Icons.photo_outlined, '本地处理，无需上传', '调色、裁切、GIF、本地虚化与本机人像美化均在手机完成。'),
         (
           Icons.cloud_outlined,
           '云端请求，由你发起',
-          '仅在生成、云端编辑、景深增强或对话时，将所需文字和图片发送给你配置的服务。',
+          '仅在生成、云端编辑、传奇二瞬、AI 人像美化或对话时，将所需文字和图片发送给你配置的服务。',
         ),
         (
           Icons.folder_outlined,
@@ -1039,12 +1042,12 @@ class InfoHero extends StatelessWidget {
   });
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(bottom: 28),
-    child: Column(
+    padding: const EdgeInsets.only(bottom: 20),
+    child: Row(
       children: [
         Container(
-          width: 72,
-          height: 72,
+          width: 56,
+          height: 56,
           decoration: BoxDecoration(
             gradient: LinearGradient(
               colors: [
@@ -1056,13 +1059,31 @@ class InfoHero extends StatelessWidget {
           ),
           child: Icon(icon, color: Colors.white, size: 34),
         ),
-        const SizedBox(height: 18),
-        Text(
-          title,
-          style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w600),
+        const SizedBox(width: 16),
+        Expanded(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                subtitle,
+                style: TextStyle(
+                  fontSize: 13,
+                  height: 1.5,
+                  color: muted(context),
+                ),
+              ),
+            ],
+          ),
         ),
-        const SizedBox(height: 10),
-        Text(subtitle, style: TextStyle(fontSize: 14, color: muted(context))),
       ],
     ),
   );
@@ -1143,6 +1164,7 @@ class _StudioLicensesScreenState extends State<StudioLicensesScreen> {
                 Padding(
                   padding: const EdgeInsets.only(bottom: 12),
                   child: Glass(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
                     child: settingRow(
                       context,
                       Icons.inventory_2_outlined,

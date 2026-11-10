@@ -276,7 +276,7 @@ void main() {
       expect(find.text('下载并安装'), findsNothing);
       expect(find.text('V1.0.0 · 2026-11-09'), findsOneWidget);
       service.answer = uc.ReleaseInfo(
-        '1.0.4',
+        '1.0.5',
         '更新',
         'gitee',
         '',
@@ -308,6 +308,52 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+  testWidgets('close image resets editor and confirms unexported changes', (
+    tester,
+  ) async {
+    await tester.pumpWidget(LiuguangApp(store: store));
+    await tester.pumpAndSettle();
+    final dynamic home = tester.state(find.byType(StudioHome));
+    Future<void> open() async {
+      home.edit(fixture);
+      // Load file I/O explicitly inside runAsync instead of the fake asset zone.
+      home.editorPath = null;
+      await tester.pump();
+      await tester.runAsync(() async {
+        final dynamic editor = tester.state(find.byType(EditorScreen));
+        await editor.load(fixture);
+      });
+      await tester.pumpAndSettle();
+      home.editorPath = fixture;
+    }
+
+    await open();
+    await tester.tap(find.byTooltip('关闭图片'));
+    await tester.pumpAndSettle();
+    expect(find.text('用示例照片体验'), findsOneWidget);
+    expect(home.editorPath, isNull);
+    await open();
+    final dynamic editor = tester.state(find.byType(EditorScreen));
+    editor.a.values[0] = .25;
+    await tester.tap(find.byTooltip('关闭图片'));
+    await tester.pumpAndSettle();
+    expect(find.text('关闭当前图片？'), findsOneWidget);
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+    expect(editor.image, isNotNull);
+    await tester.tap(find.byTooltip('关闭图片'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('确认'));
+    await tester.pumpAndSettle();
+    expect(find.text('用示例照片体验'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 150)),
+    );
+    expect(File(fixture).existsSync(), isTrue);
+    expect(store.artworks, isEmpty);
+    expect(tester.takeException(), isNull);
+  });
   testWidgets(
     'AI task replaces controls, prevents repeated actions and supports cancellation',
     (tester) async {
@@ -362,6 +408,30 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(TaskStatusCard), findsNothing);
       expect(find.text('开始增强'), findsOneWidget);
+      await tester.ensureVisible(find.text('开始增强'));
+      await tester.pumpAndSettle();
+      await tester.runAsync(() async {
+        await tester.tap(find.text('开始增强'));
+        for (var i = 0; i < 100 && api.calls < 2; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+        }
+      });
+      await tester.pump();
+      expect(api.calls, 2);
+      await tester.tap(find.byTooltip('关闭图片'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text('取消任务并关闭图片？'), findsOneWidget);
+      await tester.tap(find.text('确认'));
+      await tester.runAsync(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      });
+      await tester.pumpAndSettle();
+      expect(find.text('用示例照片体验'), findsOneWidget);
+      expect(find.byType(TaskStatusCard), findsNothing);
+      expect(api.calls, 2);
+      expect(store.artworks, isEmpty);
+      expect(tester.takeException(), isNull);
     },
   );
 }

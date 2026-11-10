@@ -220,6 +220,16 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      expect(find.byType(LauncherPreview), findsNothing);
+      expect(find.text('外观'), findsOneWidget);
+      await tester.tap(find.text('桌面图标'));
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widgetList<LauncherPreview>(find.byType(LauncherPreview))
+            .every((p) => p.size <= 72),
+        isTrue,
+      );
       await tester.scrollUntilVisible(
         find.text('鸢尾星云'),
         220,
@@ -269,6 +279,12 @@ void main() {
         await editor.load(fixture);
       });
       await tester.pumpAndSettle();
+      final y = tester.getCenter(find.text('传奇二瞬')).dy;
+      expect(tester.getCenter(find.text('人像美化')).dy, closeTo(y, .1));
+      expect(
+        tester.getBottomRight(find.text('局部修图')).dx,
+        lessThanOrEqualTo(366),
+      );
       await tester.tap(find.text('传奇二瞬'));
       await tester.pumpAndSettle();
       final start = find.text('开始增强');

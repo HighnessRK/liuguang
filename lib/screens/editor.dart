@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -19,13 +20,14 @@ class EditorScreen extends StatefulWidget {
   final AppStore store;
   final StudioApi api;
   final String? initialPath;
-  final VoidCallback onSettings;
+  final VoidCallback onSettings, onClose;
   const EditorScreen({
     super.key,
     required this.store,
     required this.api,
     this.initialPath,
     required this.onSettings,
+    required this.onClose,
   });
   @override
   State<EditorScreen> createState() => _EditorScreenState();
@@ -46,6 +48,9 @@ class _Stroke {
 
 class _EditorScreenState extends State<EditorScreen> {
   String? path;
+  String? savedState;
+  bool closing = false, dismissed = false;
+  String get imageState => jsonEncode([path, a.toJson()]);
   ui.Image? image;
   ui.FragmentShader? shader;
   Adjustments a = Adjustments();
@@ -104,6 +109,7 @@ class _EditorScreenState extends State<EditorScreen> {
         toast(context, '实时调色着色器加载失败：$e');
       }
     }
+    if (!mounted) return;
     if (widget.initialPath != null) {
       await load(widget.initialPath!);
     }
@@ -120,9 +126,8 @@ class _EditorScreenState extends State<EditorScreen> {
   }
 
   Future<void> load(String value, {bool reset = true}) async {
-    if (mounted) {
-      setState(() => loading = true);
-    }
+    if (!mounted) return;
+    setState(() => loading = true);
     try {
       final codec = await ui.instantiateImageCodec(
         await File(value).readAsBytes(),
@@ -143,6 +148,7 @@ class _EditorScreenState extends State<EditorScreen> {
           redo.clear();
           strokes = [];
           crop = const Rect.fromLTWH(0, 0, 1, 1);
+          savedState = imageState;
         }
       });
       WidgetsBinding.instance.addPostFrameCallback((_) => old?.dispose());
@@ -154,6 +160,35 @@ class _EditorScreenState extends State<EditorScreen> {
       if (mounted) {
         setState(() => loading = false);
       }
+    }
+  }
+
+  Future<void> closeImage() async {
+    if (image == null || closing || loading || (busy && token == null)) return;
+    closing = true;
+    try {
+      final unsaved =
+          imageState != savedState ||
+          strokes.isNotEmpty ||
+          crop != const Rect.fromLTWH(0, 0, 1, 1) ||
+          editPrompt.text.trim().isNotEmpty;
+      if (busy || unsaved) {
+        final accepted = await confirm(
+          context,
+          busy ? '取消任务并关闭图片？' : '关闭当前图片？',
+          busy
+              ? '将停止等待当前 AI 任务并返回导入页。服务端已经执行的计算可能仍会计费。'
+              : '尚未导出的调整和选区将被放弃，原图和已保存的作品会保留。',
+        );
+        if (!accepted || !mounted) return;
+      }
+      if (!mounted) return;
+      dismissed = true;
+      ScaffoldMessenger.of(context).removeCurrentSnackBar();
+      token?.cancel('关闭图片');
+      widget.onClose();
+    } finally {
+      closing = false;
     }
   }
 
@@ -242,6 +277,7 @@ class _EditorScreenState extends State<EditorScreen> {
         await saveToGallery(art.path);
       }
       if (mounted) {
+        savedState = imageState;
         toast(context, choice['gallery'] == true ? '已保存到作品和系统相册' : '已保存到作品');
       }
     } catch (e) {
@@ -396,6 +432,7 @@ class _EditorScreenState extends State<EditorScreen> {
         imageExtension(normalized['bytes']),
       );
       final mask = lens || portrait ? null : await maskBytes();
+      if (!mounted || token?.isCancelled != false) return;
       final instruction = portrait
           ? '人像美化：${portraitNames[portraitStyle]}，强度 ${(portraitStrength * 100).round()}%。保持原图人物身份、年龄、肤色特征、五官比例、发丝、动作、服装、背景与构图。仅作自然皮肤质感、瑕疵淡化和光影优化，保留毛孔与真实肌理，避免塑料皮肤，不新增人物或改变身形。${["温和柔肤与淡化细小瑕疵", "均衡人脸曝光，通透提亮而不过曝", "温暖肤色与柔和人像补光", "自然改善气色，克制的红润肤色", "细腻黑白人像，保留丰富灰阶与立体光影"][portraitStyle]}。'
           : lens
@@ -423,6 +460,7 @@ class _EditorScreenState extends State<EditorScreen> {
           if (mounted && activity != stage) setState(() => activity = stage);
         },
       );
+      if (!mounted || token?.isCancelled != false) return;
       Uint8List result = response.images.first;
       int? modelWidth, modelHeight;
       if (lens) {
@@ -465,10 +503,11 @@ class _EditorScreenState extends State<EditorScreen> {
           a = Adjustments();
           strokes = [];
         });
+        savedState = imageState;
         toast(context, '已完成并保存到作品，可撤销返回原图');
       }
     } catch (e) {
-      if (mounted) {
+      if (mounted && !dismissed) {
         toast(context, describeError(e));
       }
     } finally {
@@ -555,6 +594,7 @@ class _EditorScreenState extends State<EditorScreen> {
         ),
         const SizedBox(height: 22),
         Wrap(
+          alignment: WrapAlignment.center,
           spacing: 10,
           runSpacing: 12,
           children: [
@@ -588,7 +628,9 @@ class _EditorScreenState extends State<EditorScreen> {
         if (portraitAI) cloudSpecifications(),
         const SizedBox(height: 16),
         Text(
-          '柔肤依据肤色保护边缘，不改变五官与身形；可撤销，导出为副本。',
+          portraitAI
+              ? '将照片副本发送到已配置的生图模型；请求保护人物身份，结果可撤销。'
+              : '柔肤依据肤色保护边缘，不改变五官与身形；可撤销，导出为副本。',
           style: TextStyle(fontSize: 12, height: 1.7, color: muted(context)),
         ),
       ],
@@ -617,10 +659,23 @@ class _EditorScreenState extends State<EditorScreen> {
   Widget build(BuildContext context) {
     final header = PageHeader(
       title: '修图',
-      action: GlassIcon(
-        Icons.add_photo_alternate_outlined,
-        tooltip: '导入图片',
-        onTap: busy ? null : pick,
+      action: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          GlassIcon(
+            Icons.add_photo_alternate_outlined,
+            tooltip: '导入图片',
+            onTap: busy ? null : pick,
+          ),
+          if (image != null) ...[
+            const SizedBox(width: 8),
+            GlassIcon(
+              Icons.close_rounded,
+              tooltip: '关闭图片',
+              onTap: loading || (busy && token == null) ? null : closeImage,
+            ),
+          ],
+        ],
       ),
     );
     if (image == null) {
@@ -642,7 +697,7 @@ class _EditorScreenState extends State<EditorScreen> {
                 ),
                 const SizedBox(height: 14),
                 GlassButton(
-                  '传奇二瞬 · 景深增强',
+                  '传奇二瞬',
                   icon: Icons.auto_awesome_rounded,
                   onTap: () {
                     setState(() => tool = 4);
@@ -681,6 +736,16 @@ class _EditorScreenState extends State<EditorScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 24),
             child: Row(
               children: [
+                if (bounds.maxHeight <= 450) ...[
+                  GlassIcon(
+                    Icons.close_rounded,
+                    tooltip: '关闭图片',
+                    onTap: loading || (busy && token == null)
+                        ? null
+                        : closeImage,
+                  ),
+                  const SizedBox(width: 8),
+                ],
                 GlassIcon(
                   Icons.undo_rounded,
                   tooltip: '撤销',
@@ -706,65 +771,87 @@ class _EditorScreenState extends State<EditorScreen> {
           const SizedBox(height: 14),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: SizedBox(
-              height: 82,
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                children: [
-                  for (final i in [4, 5, 0, 1, 2, 3])
-                    SizedBox(
-                      width: 64,
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 3),
-                        child: GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          onTap: busy ? null : () => setState(() => tool = i),
-                          child: Glass(
-                            radius: 18,
-                            padding: const EdgeInsets.symmetric(vertical: 10),
-                            tint: tool == i ? accent(context) : null,
-                            opacity: tool == i ? .65 : null,
-                            child: Column(
-                              children: [
-                                Icon(
-                                  [
-                                    Icons.tune_rounded,
-                                    Icons.palette_outlined,
-                                    Icons.crop_rounded,
-                                    Icons.brush_outlined,
-                                    Icons.auto_awesome_rounded,
-                                    Icons.face_retouching_natural,
-                                  ][i],
-                                  size: 22,
-                                  color: tool == i
-                                      ? primaryOn(context)
-                                      : ink(context),
-                                ),
-                                const SizedBox(height: 5),
-                                Text(
-                                  [
-                                    '调色',
-                                    '色彩平衡',
-                                    '裁切',
-                                    '局部修图',
-                                    '传奇二瞬',
-                                    '人像美化',
-                                  ][i],
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    color: tool == i
-                                        ? primaryOn(context)
-                                        : ink(context),
+            child: LayoutBuilder(
+              builder: (context, c) {
+                final slot = math.max(
+                  56.0,
+                  MediaQuery.textScalerOf(context).scale(44) + 10,
+                );
+                return SizedBox(
+                  height: 66,
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(minWidth: c.maxWidth),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          for (final i in [4, 5, 0, 1, 2, 3])
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 2,
+                              ),
+                              child: GestureDetector(
+                                onTap: busy
+                                    ? null
+                                    : () => setState(() => tool = i),
+                                child: Glass(
+                                  radius: 16,
+                                  padding: EdgeInsets.zero,
+                                  tint: tool == i ? accent(context) : null,
+                                  opacity: tool == i ? 0.65 : null,
+                                  child: SizedBox(
+                                    width: slot - 4,
+                                    height: 64,
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        Icon(
+                                          [
+                                            Icons.tune_rounded,
+                                            Icons.palette_outlined,
+                                            Icons.crop_rounded,
+                                            Icons.brush_outlined,
+                                            Icons.auto_awesome_rounded,
+                                            Icons.face_retouching_natural,
+                                          ][i],
+                                          size: 21,
+                                          color: tool == i
+                                              ? primaryOn(context)
+                                              : ink(context),
+                                        ),
+                                        const SizedBox(height: 6),
+                                        Text(
+                                          [
+                                            '调色',
+                                            '色彩平衡',
+                                            '裁切',
+                                            '局部修图',
+                                            '传奇二瞬',
+                                            '人像美化',
+                                          ][i],
+                                          maxLines: 1,
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            color: tool == i
+                                                ? primaryOn(context)
+                                                : ink(context),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                                   ),
                                 ),
-                              ],
+                              ),
                             ),
-                          ),
-                        ),
+                        ],
                       ),
                     ),
-                ],
-              ),
+                  ),
+                );
+              },
             ),
           ),
           const SizedBox(height: 16),
@@ -1049,6 +1136,7 @@ class _EditorScreenState extends State<EditorScreen> {
       ),
       const SectionLabel('影调预设', caption: '从一种感觉开始'),
       Wrap(
+        alignment: WrapAlignment.center,
         spacing: 8,
         runSpacing: 8,
         children: [
@@ -1147,6 +1235,7 @@ class _EditorScreenState extends State<EditorScreen> {
         ),
         const SizedBox(height: 16),
         Wrap(
+          alignment: WrapAlignment.center,
           spacing: 8,
           runSpacing: 8,
           children: [
@@ -1281,29 +1370,26 @@ class _EditorScreenState extends State<EditorScreen> {
           style: TextStyle(fontSize: 14, height: 1.7, color: muted(context)),
         ),
         const SizedBox(height: 17),
-        Row(
+        Wrap(
+          alignment: WrapAlignment.center,
+          spacing: 8,
+          runSpacing: 8,
           children: [
-            Expanded(
-              child: GlassButton(
-                eraser ? '橡皮擦' : '画笔',
-                small: true,
-                icon: eraser
-                    ? Icons.auto_fix_normal_rounded
-                    : Icons.brush_outlined,
-                onTap: () => setState(() => eraser = !eraser),
-              ),
+            GlassButton(
+              eraser ? '橡皮擦' : '画笔',
+              small: true,
+              icon: eraser
+                  ? Icons.auto_fix_normal_rounded
+                  : Icons.brush_outlined,
+              onTap: () => setState(() => eraser = !eraser),
             ),
-            const SizedBox(width: 8),
             GlassButton(
               '撤笔',
               small: true,
               onTap: () => setState(() {
-                if (strokes.isNotEmpty) {
-                  strokes.removeLast();
-                }
+                if (strokes.isNotEmpty) strokes.removeLast();
               }),
             ),
-            const SizedBox(width: 8),
             GlassButton(
               '清空',
               small: true,
@@ -1341,6 +1427,7 @@ class _EditorScreenState extends State<EditorScreen> {
         ),
         const SizedBox(height: 24),
         Wrap(
+          alignment: WrapAlignment.center,
           spacing: 7,
           runSpacing: 7,
           children: [

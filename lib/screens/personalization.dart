@@ -92,15 +92,14 @@ class LauncherPreview extends StatelessWidget {
   }
 }
 
-class PersonalizationSettings extends StatefulWidget {
+class DesktopIconSettings extends StatefulWidget {
   final AppStore store;
-  const PersonalizationSettings({super.key, required this.store});
+  const DesktopIconSettings({super.key, required this.store});
   @override
-  State<PersonalizationSettings> createState() =>
-      _PersonalizationSettingsState();
+  State<DesktopIconSettings> createState() => _PersonalizationSettingsState();
 }
 
-class _PersonalizationSettingsState extends State<PersonalizationSettings> {
+class _PersonalizationSettingsState extends State<DesktopIconSettings> {
   late String selected = widget.store.launcherIcon;
   String glyph = 'spark', color = 'blue', material = 'glass';
   bool saving = false;
@@ -137,25 +136,8 @@ class _PersonalizationSettingsState extends State<PersonalizationSettings> {
 
   @override
   Widget build(BuildContext context) => SettingsDetail(
-    title: '个性化',
+    title: '桌面图标',
     children: [
-      Glass(
-        child: settingRow(
-          context,
-          Icons.palette_outlined,
-          '外观',
-          '主题氛围、深浅模式与玻璃材质',
-          () => Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => AppearanceSettings(store: widget.store),
-            ),
-          ),
-        ),
-      ),
-      const SectionLabel('桌面图标', caption: '选择完整设计'),
-      Center(child: LauncherPreview(id: selected, size: 108)),
-      const SizedBox(height: 24),
       LayoutBuilder(
         builder: (context, c) => Wrap(
           spacing: 14,
@@ -170,11 +152,11 @@ class _PersonalizationSettingsState extends State<PersonalizationSettings> {
                       : () => setState(() => selected = entry.key),
                   child: Glass(
                     blur: false,
-                    padding: const EdgeInsets.all(16),
+                    padding: const EdgeInsets.all(12),
                     child: Column(
                       children: [
-                        LauncherPreview(id: entry.key, size: 88),
-                        const SizedBox(height: 14),
+                        LauncherPreview(id: entry.key, size: 72),
+                        const SizedBox(height: 10),
                         Row(
                           children: [
                             Expanded(
@@ -232,3 +214,47 @@ const curatedIcons = {
   'spark_teal_glass': '森境微光',
   'spark_amber_glass': '赤陶余晖',
 };
+
+class PersonalizationSettings extends StatelessWidget {
+  final AppStore store;
+  const PersonalizationSettings({super.key, required this.store});
+  @override
+  Widget build(BuildContext context) => SettingsDetail(
+    title: '个性化',
+    children: [
+      Glass(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            settingRow(
+              context,
+              Icons.palette_outlined,
+              '外观',
+              '主题氛围、深浅模式与玻璃材质',
+              () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => AppearanceSettings(store: store),
+                ),
+              ),
+            ),
+            Divider(height: 1, color: muted(context).withValues(alpha: .1)),
+            settingRow(
+              context,
+              Icons.apps_rounded,
+              '桌面图标',
+              '选择完整图标设计',
+              () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => DesktopIconSettings(store: store),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ],
+  );
+}

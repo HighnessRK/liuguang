@@ -188,7 +188,7 @@ class GlassButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = mx.MiuixTheme.of(context).colors;
-    return mx.MiuixButton(
+    final button = mx.MiuixButton(
       enabled: onTap != null && !busy,
       onPressed: busy ? null : onTap,
       minHeight: small ? 40 : 48,
@@ -196,7 +196,7 @@ class GlassButton extends StatelessWidget {
       cornerRadius: 16,
       insideMargin: EdgeInsets.symmetric(
         horizontal: small ? 14 : 20,
-        vertical: small ? 10 : 14,
+        vertical: small ? 8 : 12,
       ),
       colors: primary
           ? mx.MiuixButtonDefaults.buttonColorsPrimary(context)
@@ -230,6 +230,9 @@ class GlassButton extends StatelessWidget {
         ],
       ),
     );
+    return small
+        ? Align(alignment: Alignment.center, widthFactor: 1, child: button)
+        : button;
   }
 }
 
@@ -249,14 +252,29 @@ class GlassIcon extends StatelessWidget {
     child: Semantics(
       label: tooltip,
       button: true,
-      child: mx.MiuixButton(
-        onPressed: onTap,
-        minWidth: 44,
-        minHeight: 44,
-        insideMargin: const EdgeInsets.all(11),
-        cornerRadius: 16,
-        child: Icon(icon, size: 22, color: ink(context)),
-      ),
+      child: icon == Icons.arrow_back_rounded || icon == Icons.close_rounded
+          ? GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: onTap,
+              child: Glass(
+                radius: 16,
+                separateLayer: true,
+                refraction: 1.5,
+                padding: EdgeInsets.zero,
+                child: SizedBox.square(
+                  dimension: 44,
+                  child: Icon(icon, size: 22, color: ink(context)),
+                ),
+              ),
+            )
+          : mx.MiuixButton(
+              onPressed: onTap,
+              minWidth: 44,
+              minHeight: 44,
+              insideMargin: const EdgeInsets.all(10),
+              cornerRadius: 16,
+              child: Icon(icon, size: 22, color: ink(context)),
+            ),
     ),
   );
 }
@@ -617,7 +635,7 @@ class EmptyState extends StatelessWidget {
   });
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 45, horizontal: 20),
+    padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
     child: Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,

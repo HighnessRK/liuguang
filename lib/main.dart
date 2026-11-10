@@ -259,6 +259,10 @@ class _StudioHomeState extends State<StudioHome> with WidgetsBindingObserver {
                               store: widget.store,
                               api: api,
                               initialPath: editorPath,
+                              onClose: () => setState(() {
+                                editorPath = null;
+                                editorRevision++;
+                              }),
                               onSettings: () => setState(() => index = 3),
                             ),
                             LibraryScreen(
