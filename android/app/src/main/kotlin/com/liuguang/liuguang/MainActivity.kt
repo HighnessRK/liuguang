@@ -23,6 +23,15 @@ class MainActivity : FlutterActivity() {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "liuguang/native").setMethodCallHandler { call, result ->
             when (call.method) {
+                "currentLauncherIcon" -> result.success(LauncherIcons.current(this))
+                "launcherIconPreview" -> {
+                    try { result.success(LauncherIcons.preview(this,call.argument<String>("id") ?: "default")) }
+                    catch(e:Exception) { result.error("icon_preview",e.message,null) }
+                }
+                "setLauncherIcon" -> {
+                    try { LauncherIcons.apply(this,call.argument<String>("id") ?: "default");result.success(null) }
+                    catch(e:Exception) { result.error("icon_change",e.message,null) }
+                }
                 "configureUpdates" -> {
                     UpdateScheduler.configure(this, call.argument<Boolean>("enabled") ?: true, call.argument<Boolean>("notify") ?: true, call.argument<String>("source") ?: "gitee", call.argument<String>("version") ?: "1.0.0")
                     if (call.argument<Boolean>("requestPermission") == true && Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 915)

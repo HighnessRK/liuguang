@@ -185,6 +185,8 @@ void main() {
       expect(find.text('修图'), findsWidgets);
       await tester.tap(find.text('传奇二瞬'));
       await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('开始增强'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('开始增强'));
       for (var i = 0; i < 40 && controlled.calls == 0; i++) {
         await tester.pump(const Duration(milliseconds: 150));

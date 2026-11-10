@@ -15,11 +15,13 @@ class AppStore extends ChangeNotifier {
   late SharedPreferences prefs;
   late Directory directory;
   EndpointConfig imageApi = EndpointConfig(), chatApi = EndpointConfig();
-  GenerationOptions defaults = GenerationOptions();
+  GenerationOptions defaults = GenerationOptions(width: 4096, height: 4096);
   List<Artwork> artworks = [];
   List<UsageRecord> usage = [];
   List<ChatMessage> messages = [];
   String theme = 'system';
+  String palette = 'aurora';
+  String launcherIcon = 'default';
   int accent = 0xff2e68cd;
   double glassOpacity = .22, blur = 12, textScale = 1;
   bool haptics = true, reduceMotion = false, highContrast = false;
@@ -40,8 +42,12 @@ class AppStore extends ChangeNotifier {
         final j = jsonDecode(raw) as Map<String, dynamic>;
         imageApi = EndpointConfig.fromJson(j['image'] ?? {});
         chatApi = EndpointConfig.fromJson(j['chat'] ?? {});
-        defaults = GenerationOptions.fromJson(j['defaults'] ?? {});
+        defaults = GenerationOptions.fromJson(
+          j['defaults'] ?? defaults.toJson(),
+        );
         theme = j['theme'] ?? 'system';
+        palette = j['palette'] ?? 'aurora';
+        launcherIcon = j['launcherIcon'] ?? 'default';
         accent = j['accent'] ?? accent;
         glassOpacity = (j['glassOpacity'] as num?)?.toDouble() ?? glassOpacity;
         blur = (j['blur'] as num?)?.toDouble() ?? blur;
@@ -85,6 +91,15 @@ class AppStore extends ChangeNotifier {
       await prefs.setInt('visual_revision', 3);
       await saveSettings();
     }
+    if (prefs.getInt('generation_defaults_revision') != 102) {
+      final edge = defaults.width > defaults.height
+          ? defaults.width
+          : defaults.height;
+      defaults.width = (defaults.width * 4096 / edge / 16).round() * 16;
+      defaults.height = (defaults.height * 4096 / edge / 16).round() * 16;
+      await prefs.setInt('generation_defaults_revision', 102);
+      await saveSettings();
+    }
   }
 
   Future<void> saveSettings({bool keys = false}) async {
@@ -99,6 +114,8 @@ class AppStore extends ChangeNotifier {
         'chat': chatApi.toJson(),
         'defaults': defaults.toJson(),
         'theme': theme,
+        'palette': palette,
+        'launcherIcon': launcherIcon,
         'accent': accent,
         'glassOpacity': glassOpacity,
         'blur': blur,

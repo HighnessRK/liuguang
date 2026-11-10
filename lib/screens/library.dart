@@ -15,12 +15,14 @@ import 'editor.dart';
 
 class LibraryScreen extends StatefulWidget {
   final AppStore store;
+  final bool active;
   final ValueChanged<String> onEdit, onReuse;
   const LibraryScreen({
     super.key,
     required this.store,
     required this.onEdit,
     required this.onReuse,
+    this.active = true,
   });
   @override
   State<LibraryScreen> createState() => _LibraryScreenState();
@@ -38,6 +40,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (!widget.active) return const SizedBox.shrink();
     final items = widget.store.artworks
         .where(
           (a) =>
@@ -226,7 +229,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
               ),
             ),
           ),
-        const SliverToBoxAdapter(child: SizedBox(height: 140)),
+        const SliverToBoxAdapter(child: SizedBox(height: 28)),
       ],
     );
   }
@@ -419,6 +422,12 @@ class _ArtworkDetailState extends State<ArtworkDetail> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     _meta(context, '分辨率', '${art.width} × ${art.height}'),
+                    if (art.modelWidth != null && art.modelHeight != null)
+                      _meta(
+                        context,
+                        '模型输出',
+                        '${art.modelWidth} × ${art.modelHeight}${art.modelWidth != art.width || art.modelHeight != art.height ? ' · 已还原画布尺寸' : ''}',
+                      ),
                     _meta(
                       context,
                       '格式',

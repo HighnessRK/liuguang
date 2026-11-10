@@ -82,6 +82,8 @@ class _EditorScreenState extends State<EditorScreen> {
   List<_Stroke> strokes = [];
   double brush = .075;
   GenerationOptions? cloudOptions;
+  int lensStyle = 0;
+  double lensStrength = .72;
   Rect crop = const Rect.fromLTWH(0, 0, 1, 1);
   int cropRatio = 0;
   double focusX = .5, focusY = .45, focusRadius = .34, bokehStrength = .5;
@@ -368,6 +370,11 @@ class _EditorScreenState extends State<EditorScreen> {
     }
     FocusManager.instance.primaryFocus?.unfocus();
     final model = widget.store.imageApi.model;
+    final originalWidth = image!.width, originalHeight = image!.height;
+    final requestOptions =
+        cloudOptions ?? originalPhotoRequest(originalWidth, originalHeight);
+    final preserveCanvas = cloudOptions == null;
+    final toneStyle = lensStyle, toneStrength = lensStrength;
     beginTask(lens ? '正在准备增强副本' : '正在准备选区');
     token = CancelToken();
     try {
@@ -385,23 +392,13 @@ class _EditorScreenState extends State<EditorScreen> {
       );
       final mask = lens ? null : await maskBytes();
       final instruction = lens
-          ? '$lensPrompt\n影调风格：自然电影感，细腻层次，克制的色彩。'
+          ? '$lensPrompt\n影调方向：${lensToneNames[toneStyle]}，影调强度 ${(toneStrength * 100).round()}%，明暗层次鲜明、色彩分离自然，避免平淡灰雾。'
           : '${editPrompt.text}\n\n仅修改蒙版透明区域。保持其余区域的主体、人物身份、构图与光照，不添加额外元素。';
       final response = await widget.api.generate(
         prompt: instruction,
         options: GenerationOptions(
-          width:
-              cloudOptions?.width ??
-              photoOutputOptions(
-                normalized['width'],
-                normalized['height'],
-              ).width,
-          height:
-              cloudOptions?.height ??
-              photoOutputOptions(
-                normalized['width'],
-                normalized['height'],
-              ).height,
+          width: requestOptions.width,
+          height: requestOptions.height,
           count: 1,
           quality: cloudOptions?.quality ?? 'high',
           format: 'png',
@@ -417,6 +414,20 @@ class _EditorScreenState extends State<EditorScreen> {
         },
       );
       Uint8List result = response.images.first;
+      int? modelWidth, modelHeight;
+      if (lens) {
+        if (mounted) setState(() => activity = '正在精修影调与保存画布');
+        final finished = await compute(finishLensImage, {
+          'bytes': result,
+          'style': toneStyle,
+          'strength': toneStrength,
+          if (preserveCanvas) 'width': originalWidth,
+          if (preserveCanvas) 'height': originalHeight,
+        });
+        result = finished['bytes'];
+        modelWidth = finished['modelWidth'];
+        modelHeight = finished['modelHeight'];
+      }
       if (mask != null) {
         result = await compute(compositeMasked, {
           'original': normalized['bytes'],
@@ -432,6 +443,8 @@ class _EditorScreenState extends State<EditorScreen> {
         prompt: instruction,
         model: model,
         kind: lens ? '景深增强' : '局部修图',
+        modelWidth: modelWidth,
+        modelHeight: modelHeight,
       );
       remember();
       await load(art.path, reset: false);
@@ -652,7 +665,8 @@ class _EditorScreenState extends State<EditorScreen> {
               child: lgr.LiquidGlassLayer(
                 settings: glassSettings(context),
                 child: ListView(
-                  padding: const EdgeInsets.fromLTRB(24, 0, 24, 112),
+                  key: ValueKey(busy ? 'editor-task' : 'editor-tool-$tool'),
+                  padding: const EdgeInsets.fromLTRB(24, 0, 24, 28),
                   children: [
                     if (busy)
                       TaskStatusCard(
@@ -944,6 +958,7 @@ class _EditorScreenState extends State<EditorScreen> {
   );
 
   Widget balanceControls() => Glass(
+    blur: false,
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -962,8 +977,16 @@ class _EditorScreenState extends State<EditorScreen> {
           GlassSlider(
             value: a.balance[balanceRange * 3 + c],
             semanticLabel: ['青色到红色', '洋红到绿色', '黄色到蓝色'][c],
-            leftColor: [Colors.cyan, Colors.purpleAccent, Colors.yellow][c],
-            rightColor: [Colors.red, Colors.green, Colors.blue][c],
+            leftColor: [
+              const Color(0xff00cce5),
+              const Color(0xffe600be),
+              const Color(0xffffd600),
+            ][c],
+            rightColor: [
+              const Color(0xffef383c),
+              const Color(0xff13bd62),
+              const Color(0xff316bff),
+            ][c],
             onChangeStart: (_) => remember(),
             onChanged: (v) =>
                 setState(() => a.balance[balanceRange * 3 + c] = v),
@@ -980,8 +1003,9 @@ class _EditorScreenState extends State<EditorScreen> {
               },
               activeColor: accentInk(context),
             ),
-            const Text('保持明度', style: TextStyle(fontSize: 14)),
-            const Spacer(),
+            const SizedBox(width: 10),
+            const Expanded(child: Text('保持明度', style: TextStyle(fontSize: 14))),
+            const SizedBox(width: 16),
             GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: () {
@@ -995,6 +1019,7 @@ class _EditorScreenState extends State<EditorScreen> {
             ),
           ],
         ),
+        const SizedBox(height: 14),
         Text(
           '独立调整三段明暗的色彩。保持明度可保护颜色调整前的 HSL 亮度。',
           style: TextStyle(fontSize: 12, height: 1.7, color: muted(context)),
@@ -1094,14 +1119,51 @@ class _EditorScreenState extends State<EditorScreen> {
     padding: const EdgeInsets.only(top: 12),
     child: GlassButton(
       cloudOptions == null
-          ? '输出规格 · 自动 1K'
+          ? '输出规格 · 原尺寸 ${image?.width ?? 0} × ${image?.height ?? 0}'
           : '输出规格 · ${cloudOptions!.resolution} · ${cloudOptions!.aspectLabel}',
       small: true,
       icon: Icons.aspect_ratio_rounded,
       onTap: () async {
+        final choice = await glassSheet<String>(
+          context,
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text(
+                '输出尺寸',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 24),
+              GlassButton(
+                '原尺寸 · ${image!.width} × ${image!.height}',
+                primary: cloudOptions == null,
+                onTap: () => Navigator.pop(context, 'original'),
+              ),
+              const SizedBox(height: 14),
+              GlassButton(
+                '自定义规格',
+                onTap: () => Navigator.pop(context, 'custom'),
+              ),
+              const SizedBox(height: 18),
+              Text(
+                '原尺寸保持最终画布大小。模型返回较小时会还原到原画布，实际模型输出像素会记录在作品详情。',
+                style: TextStyle(
+                  fontSize: 12,
+                  height: 1.7,
+                  color: muted(context),
+                ),
+              ),
+            ],
+          ),
+        );
+        if (!mounted || choice == null) return;
+        if (choice == 'original') {
+          setState(() => cloudOptions = null);
+          return;
+        }
         final selected = await glassSheet<GenerationOptions>(
           context,
-          GenerationSettings(initial: cloudOptions ?? GenerationOptions()),
+          GenerationSettings(initial: cloudOptions ?? widget.store.defaults),
         );
         if (selected != null && mounted) {
           setState(() => cloudOptions = selected);
@@ -1162,16 +1224,27 @@ class _EditorScreenState extends State<EditorScreen> {
           max: .25,
           onChanged: (v) => setState(() => brush = v),
         ),
-        Row(
-          children: [
-            GlassCheckbox(
-              value: feather,
-              onChanged: (v) => setState(() => feather = v ?? true),
-            ),
-            const Text('柔化选区边缘', style: TextStyle(fontSize: 14)),
-          ],
+        const SizedBox(height: 20),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+          decoration: BoxDecoration(
+            color: accent(context).withValues(alpha: .055),
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Row(
+            children: [
+              GlassCheckbox(
+                value: feather,
+                onChanged: (v) => setState(() => feather = v ?? true),
+              ),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Text('柔化选区边缘', style: TextStyle(fontSize: 14)),
+              ),
+            ],
+          ),
         ),
-        const SizedBox(height: 9),
+        const SizedBox(height: 24),
         Wrap(
           spacing: 7,
           runSpacing: 7,
@@ -1191,7 +1264,7 @@ class _EditorScreenState extends State<EditorScreen> {
               ),
           ],
         ),
-        const SizedBox(height: 15),
+        const SizedBox(height: 24),
         GlassField(
           controller: editPrompt,
           hint: '描述选区如何变化…',
@@ -1232,10 +1305,24 @@ class _EditorScreenState extends State<EditorScreen> {
         const SizedBox(height: 20),
         if (!manualLens) ...[
           Text(
-            '自然景深 · 细腻影调',
+            '电影级明暗层次 · 自然景深',
             style: TextStyle(fontSize: 14, color: muted(context)),
           ),
           const SizedBox(height: 18),
+          GlassSegments(
+            labels: lensToneNames,
+            selected: lensStyle,
+            onChanged: (i) => setState(() => lensStyle = i),
+          ),
+          const SizedBox(height: 22),
+          GlassSlider(
+            label: '影调强度',
+            value: lensStrength,
+            min: 0,
+            max: 1,
+            onChanged: (v) => setState(() => lensStrength = v),
+          ),
+          const SizedBox(height: 22),
           GlassButton(
             '开始增强',
             primary: true,
@@ -1450,6 +1537,7 @@ class _ExportSheetState extends State<ExportSheet> {
             value: gallery,
             onChanged: (v) => setState(() => gallery = v ?? true),
           ),
+          const SizedBox(width: 10),
           const Expanded(
             child: Text('同时保存到系统相册', style: TextStyle(fontSize: 14)),
           ),

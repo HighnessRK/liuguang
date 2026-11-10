@@ -3,6 +3,9 @@ import 'package:flutter/material.dart';
 import '../core/api.dart';
 import '../core/models.dart';
 import '../core/store.dart';
+import '../core/appearance.dart';
+import '../ui/theme_preview.dart';
+import 'personalization.dart';
 import '../ui/glass.dart';
 import 'create.dart';
 import 'usage.dart';
@@ -17,7 +20,7 @@ class SettingsScreen extends StatelessWidget {
       Navigator.push(context, MaterialPageRoute(builder: (_) => page));
   @override
   Widget build(BuildContext context) => ListView(
-    padding: const EdgeInsets.fromLTRB(24, 0, 24, 112),
+    padding: const EdgeInsets.fromLTRB(24, 0, 24, 28),
     children: [
       const PageHeader(title: '设置'),
       Glass(
@@ -68,6 +71,14 @@ class SettingsScreen extends StatelessWidget {
               '交互与辅助',
               '触感、动效与文字可读性',
               () => open(context, InteractionSettings(store: store)),
+            ),
+            _line(context),
+            settingRow(
+              context,
+              Icons.auto_awesome_mosaic_outlined,
+              '个性化',
+              '桌面图标、颜色与材质',
+              () => open(context, PersonalizationSettings(store: store)),
             ),
           ],
         ),
@@ -172,49 +183,69 @@ class AppearanceSettings extends StatelessWidget {
             store.saveSettings();
           },
         ),
-        const SectionLabel('主题色'),
-        Glass(
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              for (final c in [
-                0xff2e68cd,
-                0xff17749a,
-                0xff6851c7,
-                0xffad5524,
-                0xffba4279,
-                0xff207b61,
-              ])
-                GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: () {
-                    store.accent = c;
-                    store.saveSettings();
-                  },
-                  child: Container(
-                    width: 34,
-                    height: 34,
-                    decoration: BoxDecoration(
-                      color: Color(c),
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: store.accent == c
-                            ? ink(context)
-                            : Colors.transparent,
-                        width: 1.5,
+        const SectionLabel('主题氛围', caption: '背景与控件一起改变'),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final width = (constraints.maxWidth - 14) / 2;
+            return Wrap(
+              spacing: 14,
+              runSpacing: 18,
+              children: [
+                for (final palette in studioPalettes)
+                  SizedBox(
+                    width: width,
+                    child: Semantics(
+                      excludeSemantics: true,
+                      button: true,
+                      selected: store.palette == palette.id,
+                      label: palette.name,
+                      child: GestureDetector(
+                        onTap: () {
+                          store.palette = palette.id;
+                          store.accent = palette.primary;
+                          store.saveSettings();
+                        },
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(3),
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(
+                                  color: store.palette == palette.id
+                                      ? accent(context)
+                                      : Colors.transparent,
+                                  width: 2,
+                                ),
+                              ),
+                              child: PalettePreview(palette: palette),
+                            ),
+                            const SizedBox(height: 9),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    palette.name,
+                                    style: const TextStyle(fontSize: 14),
+                                  ),
+                                ),
+                                if (store.palette == palette.id)
+                                  Icon(
+                                    Icons.check_circle_rounded,
+                                    size: 18,
+                                    color: accent(context),
+                                  ),
+                              ],
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                    child: store.accent == c
-                        ? const Icon(
-                            Icons.check_rounded,
-                            size: 17,
-                            color: Colors.white,
-                          )
-                        : null,
                   ),
-                ),
-            ],
-          ),
+              ],
+            );
+          },
         ),
         const SectionLabel('玻璃材质'),
         Glass(
@@ -364,7 +395,7 @@ Widget _toggle(
   bool value,
   ValueChanged<bool> onChanged,
 ) => Padding(
-  padding: const EdgeInsets.symmetric(vertical: 7),
+  padding: const EdgeInsets.symmetric(vertical: 12),
   child: Row(
     children: [
       Expanded(
@@ -380,6 +411,7 @@ Widget _toggle(
           ],
         ),
       ),
+      const SizedBox(width: 12),
       GlassToggle(
         value: value,
         onChanged: onChanged,
@@ -883,20 +915,9 @@ class AboutStudio extends StatelessWidget {
     children: [
       const SizedBox(height: 20),
       Center(
-        child: Container(
-          width: 82,
-          height: 82,
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [accent(context), const Color(0xff8a6bff)],
-            ),
-            borderRadius: BorderRadius.circular(24),
-          ),
-          child: const Icon(
-            Icons.auto_awesome_rounded,
-            size: 42,
-            color: Colors.white,
-          ),
+        child: LauncherPreview(
+          id: StudioScope.of(context).launcherIcon,
+          size: 82,
         ),
       ),
       const SizedBox(height: 18),

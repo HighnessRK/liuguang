@@ -5,6 +5,7 @@ import 'package:flutter_miuix/miuix.dart' as mx;
 import 'package:liquid_glass_renderer/liquid_glass_renderer.dart' as lgr;
 
 import '../core/store.dart';
+import '../core/appearance.dart';
 import 'editable.dart';
 export 'editable.dart' show StudioSelectable;
 
@@ -62,12 +63,15 @@ class Glass extends StatelessWidget {
         false;
     if (!separateLayer && !nested) {
       final r = BorderRadius.circular(radius);
+      final materialShift = (store.glassOpacity - .22) * .6;
+      double surfaceAlpha(double value) =>
+          store.highContrast ? .96 : (value + materialShift).clamp(.03, .96);
       return ClipRRect(
         borderRadius: r,
         child: BackdropFilter.grouped(
           filter: ui.ImageFilter.blur(
-            sigmaX: store.highContrast || !blur ? 0 : 12,
-            sigmaY: store.highContrast || !blur ? 0 : 12,
+            sigmaX: store.highContrast || !blur ? 0 : store.blur,
+            sigmaY: store.highContrast || !blur ? 0 : store.blur,
           ),
           child: Container(
             padding: padding,
@@ -83,12 +87,18 @@ class Glass extends StatelessWidget {
                       ]
                     : dark
                     ? [
-                        Colors.white.withValues(alpha: .13),
-                        Colors.white.withValues(alpha: .05),
+                        (store.highContrast
+                                ? const Color(0xff202733)
+                                : Colors.white)
+                            .withValues(alpha: surfaceAlpha(.13)),
+                        (store.highContrast
+                                ? const Color(0xff202733)
+                                : Colors.white)
+                            .withValues(alpha: surfaceAlpha(.05)),
                       ]
                     : [
-                        Colors.white.withValues(alpha: .82),
-                        Colors.white.withValues(alpha: .52),
+                        Colors.white.withValues(alpha: surfaceAlpha(.82)),
+                        Colors.white.withValues(alpha: surfaceAlpha(.52)),
                       ],
               ),
               border: Border.all(
@@ -346,8 +356,8 @@ class GlassSlider extends StatelessWidget {
       if (label != null)
         Row(
           children: [
-            Text(label!, style: const TextStyle(fontSize: 14)),
-            const Spacer(),
+            Expanded(child: Text(label!, style: const TextStyle(fontSize: 14))),
+            const SizedBox(width: 16),
             Text(
               '${(value * 100).round()}',
               style: TextStyle(
@@ -358,37 +368,35 @@ class GlassSlider extends StatelessWidget {
             ),
           ],
         ),
-      Listener(
-        onPointerDown: (_) => onChangeStart?.call(value),
-        child: Semantics(
-          label: semanticLabel ?? label,
-          child: mx.MiuixSlider(
-            value: value.clamp(min, max),
-            min: min,
-            max: max,
-            onValueChanged: onChanged,
-            onValueChangeFinished: () => onChangeEnd?.call(value),
-          ),
-        ),
-      ),
-      if (leftColor != null)
-        ExcludeSemantics(
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              for (final color in [leftColor!, rightColor!])
-                Container(
-                  width: 22,
-                  height: 22,
-                  decoration: BoxDecoration(
-                    color: color,
-                    shape: BoxShape.circle,
-                    border: Border.all(color: Colors.white54),
-                  ),
+      if (label != null) const SizedBox(height: 10),
+      Row(
+        children: [
+          if (leftColor != null) ...[
+            ColorEndpoint(color: leftColor!),
+            const SizedBox(width: 14),
+          ],
+          Expanded(
+            child: Listener(
+              onPointerDown: (_) => onChangeStart?.call(value),
+              child: Semantics(
+                label: semanticLabel ?? label,
+                child: mx.MiuixSlider(
+                  value: value.clamp(min, max),
+                  min: min,
+                  max: max,
+                  onValueChanged: onChanged,
+                  onValueChangeFinished: () => onChangeEnd?.call(value),
                 ),
-            ],
+              ),
+            ),
           ),
-        ),
+          if (rightColor != null) ...[
+            const SizedBox(width: 14),
+            ColorEndpoint(color: rightColor!),
+          ],
+        ],
+      ),
+      const SizedBox(height: 10),
       if (left != null || right != null)
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -405,6 +413,40 @@ class GlassSlider extends StatelessWidget {
         ),
     ],
   );
+}
+
+class ColorEndpoint extends StatelessWidget {
+  final Color color;
+  const ColorEndpoint({super.key, required this.color});
+  @override
+  Widget build(BuildContext context) => ExcludeSemantics(
+    child: RepaintBoundary(
+      child: SizedBox.square(
+        dimension: 22,
+        child: CustomPaint(painter: _ColorEndpointPainter(color)),
+      ),
+    ),
+  );
+}
+
+class _ColorEndpointPainter extends CustomPainter {
+  final Color color;
+  const _ColorEndpointPainter(this.color);
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.drawCircle(size.center(Offset.zero), 10, Paint()..color = color);
+    canvas.drawCircle(
+      size.center(Offset.zero),
+      10,
+      Paint()
+        ..color = const Color(0x18000000)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_ColorEndpointPainter old) => old.color != color;
 }
 
 class GlassCheckbox extends StatelessWidget {
@@ -763,7 +805,10 @@ class StudioBackground extends StatelessWidget {
           Positioned.fill(
             child: RepaintBoundary(
               child: CustomPaint(
-                painter: _BackgroundPainter(isDark(context), accent(context)),
+                painter: _BackgroundPainter(
+                  isDark(context),
+                  StudioScope.of(context).palette,
+                ),
               ),
             ),
           ),
@@ -776,16 +821,17 @@ class StudioBackground extends StatelessWidget {
 
 class _BackgroundPainter extends CustomPainter {
   final bool dark;
-  final Color color;
-  _BackgroundPainter(this.dark, this.color);
+  final String palette;
+  _BackgroundPainter(this.dark, this.palette);
   @override
   void paint(Canvas canvas, Size size) {
     final alpha = dark ? .26 : .40;
-    const blobs = [
-      (-70.0, -60.0, 320.0, Color(0xFF4C8DFF), 1.0),
-      (-90.0, 30.0, 300.0, Color(0xFFFF7EB6), .9),
-      (70.0, 320.0, 260.0, Color(0xFF8A6BFF), .75),
-      (-50.0, 620.0, 240.0, Color(0xFF4C8DFF), .6),
+    final colors = paletteById(palette).colors;
+    final blobs = [
+      (-70.0, -60.0, 320.0, Color(colors[0]), 1.0),
+      (-90.0, 30.0, 300.0, Color(colors[1]), .9),
+      (70.0, 320.0, 260.0, Color(colors[2]), .75),
+      (-50.0, 620.0, 240.0, Color(colors[3]), .6),
     ];
     for (var i = 0; i < blobs.length; i++) {
       final b = blobs[i];
@@ -806,5 +852,5 @@ class _BackgroundPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_BackgroundPainter old) =>
-      old.dark != dark || old.color != color;
+      old.dark != dark || old.palette != palette;
 }

@@ -1,4 +1,3 @@
-
 import 'package:dio/dio.dart';
 import 'package:image/image.dart' as image;
 import 'package:liuguang/core/api.dart';
@@ -135,7 +134,13 @@ void main() {
       await tester.tap(find.text('外观'));
       await tester.pumpAndSettle();
       expect(find.text('显示模式'), findsOneWidget);
-      expect(find.text('主题色'), findsOneWidget);
+      expect(find.text('主题氛围'), findsOneWidget);
+      await tester.scrollUntilVisible(
+        find.text('玻璃材质'),
+        300,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
       final track = find
           .descendant(
             of: find.byType(mx.MiuixSlider).first,
@@ -151,7 +156,13 @@ void main() {
   ) async {
     await tester.pumpWidget(LiuguangApp(store: store));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('1K · 1:1'));
+    await tester.scrollUntilVisible(
+      find.text('4K · 1:1'),
+      250,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('4K · 1:1'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('9:16'));
     await tester.tap(find.text('2K'));
@@ -263,7 +274,7 @@ void main() {
       expect(find.text('下载并安装'), findsNothing);
       expect(find.text('V1.0.0 · 2026-11-09'), findsOneWidget);
       service.answer = uc.ReleaseInfo(
-        '1.0.2',
+        '1.0.3',
         '更新',
         'gitee',
         '',

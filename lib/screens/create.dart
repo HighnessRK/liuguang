@@ -11,10 +11,12 @@ import '../core/api.dart';
 import '../core/imaging.dart';
 import '../core/image_transport.dart';
 import '../core/models.dart';
+import '../core/materials.dart';
 import '../core/store.dart';
 import '../ui/glass.dart';
 import 'assistant.dart';
 import 'library.dart';
+import 'materials.dart';
 
 class CreateScreen extends StatefulWidget {
   final AppStore store;
@@ -35,6 +37,7 @@ class CreateScreen extends StatefulWidget {
 }
 
 class _CreateScreenState extends State<CreateScreen> {
+  String? selectedMaterial;
   late final TextEditingController prompt = TextEditingController(
     text: widget.store.prefs.getString('draft') ?? '',
   );
@@ -221,7 +224,7 @@ class _CreateScreenState extends State<CreateScreen> {
     });
     try {
       final reply = await widget.api.generate(
-        prompt: original,
+        prompt: withMaterial(original, selectedMaterial),
         options: settings,
         inputs: [if (mode == 1 && base != null) base!, ...references],
         cancelToken: token,
@@ -320,7 +323,7 @@ class _CreateScreenState extends State<CreateScreen> {
       );
     }
     return ListView(
-      padding: const EdgeInsets.fromLTRB(22, 5, 22, 125),
+      padding: const EdgeInsets.fromLTRB(24, 5, 24, 28),
       children: [
         PageHeader(
           title: '创作',
@@ -353,59 +356,38 @@ class _CreateScreenState extends State<CreateScreen> {
         ),
         SectionLabel(
           '提示词',
-          action: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: polishing || busy ? null : polish,
-            child: Text(
-              polishing ? '润色中…' : '✧ 智能润色',
-              style: TextStyle(
-                color: accentInk(context),
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-        ),
-        Glass(
-          padding: const EdgeInsets.fromLTRB(17, 4, 17, 12),
-          child: Column(
+          action: Row(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              IgnorePointer(
-                ignoring: busy,
-                child: GlassField(
-                  controller: prompt,
-                  hint: '描述主体、场景与光线…',
-                  minLines: 4,
-                  maxLines: 9,
-                ),
+              GlassIcon(
+                Icons.backspace_outlined,
+                tooltip: '清空提示词',
+                onTap: busy ? null : () => prompt.clear(),
               ),
-              Row(
-                children: [
-                  Icon(
-                    Icons.lightbulb_outline_rounded,
-                    size: 13,
-                    color: muted(context),
-                  ),
-                  const SizedBox(width: 5),
-                  Text(
-                    '主体 · 场景 · 光线 · 风格',
-                    style: TextStyle(color: muted(context), fontSize: 12),
-                  ),
-                  const Spacer(),
-                  GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: busy ? null : () => prompt.clear(),
-                    child: Text(
-                      '清空',
-                      style: TextStyle(fontSize: 12, color: muted(context)),
-                    ),
-                  ),
-                ],
+              const SizedBox(width: 8),
+              GlassButton(
+                polishing ? '润色中…' : '智能润色',
+                small: true,
+                icon: Icons.auto_awesome_outlined,
+                onTap: polishing || busy ? null : polish,
               ),
             ],
           ),
         ),
-        const SizedBox(height: 12),
+        IgnorePointer(
+          ignoring: busy,
+          child: GlassField(
+            controller: prompt,
+            hint: '描述主体、场景与光线…',
+            minLines: 4,
+            maxLines: 9,
+          ),
+        ),
+        const SectionLabel('材质'),
+        MaterialSelection(
+          selected: selectedMaterial,
+          onChanged: (id) => setState(() => selectedMaterial = id),
+        ),
         if (mode == 1) ...[
           const SectionLabel('底图', caption: '原图会单独保留'),
           if (base == null)
@@ -736,10 +718,10 @@ class _GenerationSettingsState extends State<GenerationSettings> {
     final r = ratios[ratioIndex];
     o.width = r.$1 >= r.$2
         ? resolution
-        : (resolution * r.$1 / r.$2 / 8).round() * 8;
+        : (resolution * r.$1 / r.$2 / 16).round() * 16;
     o.height = r.$2 >= r.$1
         ? resolution
-        : (resolution * r.$2 / r.$1 / 8).round() * 8;
+        : (resolution * r.$2 / r.$1 / 16).round() * 16;
   }
 
   @override

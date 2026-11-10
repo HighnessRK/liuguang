@@ -54,6 +54,15 @@ GenerationOptions photoOutputOptions(int width, int height) {
   );
 }
 
+GenerationOptions originalPhotoRequest(int width, int height) {
+  final edge = width > height ? width : height;
+  final scale = edge > 4096 ? 4096 / edge : 1.0;
+  return GenerationOptions(
+    width: ((width * scale / 16).round() * 16).clamp(64, 4096),
+    height: ((height * scale / 16).round() * 16).clamp(64, 4096),
+  );
+}
+
 class GenerationOptions {
   int width, height, count, compression;
   String quality, format, moderation;
@@ -106,6 +115,7 @@ class Artwork {
   final String id, path, prompt, model, kind;
   final DateTime created;
   final int width, height;
+  final int? modelWidth, modelHeight;
   bool favorite;
   Artwork({
     required this.id,
@@ -116,6 +126,8 @@ class Artwork {
     required this.created,
     required this.width,
     required this.height,
+    this.modelWidth,
+    this.modelHeight,
     this.favorite = false,
   });
   Map<String, dynamic> toJson() => {
@@ -127,6 +139,8 @@ class Artwork {
     'created': created.toIso8601String(),
     'width': width,
     'height': height,
+    'modelWidth': modelWidth,
+    'modelHeight': modelHeight,
     'favorite': favorite,
   };
   factory Artwork.fromJson(Map<String, dynamic> j) => Artwork(
@@ -138,6 +152,8 @@ class Artwork {
     created: DateTime.parse(j['created']),
     width: j['width'],
     height: j['height'],
+    modelWidth: j['modelWidth'],
+    modelHeight: j['modelHeight'],
     favorite: j['favorite'] ?? false,
   );
 }

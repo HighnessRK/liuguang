@@ -240,6 +240,9 @@ class _StudioHomeState extends State<StudioHome> with WidgetsBindingObserver {
           child: Stack(
             children: [
               Positioned.fill(
+                bottom: MediaQuery.viewInsetsOf(context).bottom == 0
+                    ? MediaQuery.paddingOf(context).bottom + 90
+                    : 0,
                 child: IndexedStack(
                   index: index,
                   children:
@@ -260,6 +263,7 @@ class _StudioHomeState extends State<StudioHome> with WidgetsBindingObserver {
                             ),
                             LibraryScreen(
                               store: widget.store,
+                              active: index == 2,
                               onEdit: edit,
                               onReuse: (p) => setState(() {
                                 reusedPrompt = p;

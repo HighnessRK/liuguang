@@ -7,8 +7,12 @@ import 'package:path_provider/path_provider.dart';
 
 import 'store.dart';
 
-const appVersion = '1.0.1';
-const releaseNotes = '''修复：景深上传体积与同步超时问题，随想接口改用异步任务。
+const appVersion = '1.0.2';
+const releaseNotes = '''新增：六大类 32 种材质与离线预览，包含光透与毛绒。
+新增：八套完整渐变主题，桌面图标支持造型、颜色与材质组合。
+优化：生成默认 4K，传奇二瞬默认原尺寸画布，增加三种影调和强度。
+修复：提示词尾部冗余、滑条与选框拥挤、色彩端点模糊。''';
+const releaseNotesV101 = '''修复：景深上传体积与同步超时问题，随想接口改用异步任务。
 修复：输入提示重叠、中文编辑菜单与文本选择体验。
 修复：当前版本重复日志及不应出现的下载安装按钮。
 优化：统一任务状态、取消操作、关于页面与控件布局。

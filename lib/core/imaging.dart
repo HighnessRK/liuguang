@@ -273,6 +273,8 @@ Future<Artwork> saveArtwork(
   required String prompt,
   required String model,
   required String kind,
+  int? modelWidth,
+  int? modelHeight,
   String? format,
   int quality = 90,
 }) async {
@@ -307,6 +309,8 @@ Future<Artwork> saveArtwork(
     created: DateTime.now(),
     width: result['width']!,
     height: result['height']!,
+    modelWidth: modelWidth,
+    modelHeight: modelHeight,
   );
   store.artworks.insert(0, art);
   await store.saveCatalog();
@@ -428,4 +432,66 @@ Uint8List compositeMasked(Map<String, dynamic> job) {
 }
 
 const lensPrompt =
-    '对第一张原图进行相机级影调与景深增强。严格保持主体身份、面部、发丝、服饰、动作、物体数量、画面文字、拍摄视角和构图。依据真实空间的遮挡关系推断深度，仅对离焦区域施加连续、渐进、符合光学的景深虚化，保护焦内主体与边缘。自然保留高光光斑、前景和背景的层次过渡，不制造剪纸轮廓。保留原始细节、纹理和动态范围，不擅自美颜、不添加元素。输出高质量图像。';
+    '对第一张原图进行具有明确电影影调的相机级景深增强。严格保持主体身份、面部、发丝、服饰、动作、物体数量、画面文字、拍摄视角和构图。建立有层次的黑位、柔和滚降的高光、丰富的中间调与立体局部反差，避免平淡灰雾和过曝；让肤色自然，色彩有明确但克制的冷暖分离。依据真实空间的遮挡关系推断深度，仅对离焦区域施加连续、渐进、符合光学的景深虚化，保护焦内主体与边缘。自然保留高光光斑、前景和背景的层次过渡，不制造剪纸轮廓。保留原始细节、纹理和动态范围，不擅自美颜、不添加元素。输出高质量图像。';
+
+const lensToneNames = ['经典电影', '暖调人像', '冷峻青蓝'];
+
+Adjustments lensTone(int style, double strength) {
+  final s = strength.clamp(0.0, 1.0);
+  final tone = Adjustments();
+  tone.values[1] = .18 * s;
+  tone.values[2] = -.24 * s;
+  tone.values[3] = .12 * s;
+  tone.values[4] = .30 * s;
+  tone.values[6] = .16 * s;
+  tone.values[7] = -.08 * s;
+  tone.values[8] = .15 * s;
+  tone.values[12] = .12 * s;
+  tone.values[9] =
+      (style == 1
+          ? 0.20
+          : style == 2
+          ? -0.12
+          : 0.05) *
+      s;
+  tone.balance[0] = -.09 * s;
+  tone.balance[2] = .06 * s;
+  tone.balance[6] = (style == 2 ? -0.025 : 0.08) * s;
+  tone.balance[8] = -.07 * s;
+  return tone;
+}
+
+Map<String, dynamic> finishLensImage(Map<String, dynamic> job) {
+  final modelSize = imageDimensions(job['bytes'] as Uint8List);
+  final toned = processImage({
+    'bytes': job['bytes'],
+    'format': 'png',
+    'adjustments': lensTone(
+      job['style'] as int,
+      job['strength'] as double,
+    ).toJson(),
+  });
+  var bytes = toned['bytes'] as Uint8List;
+  if (job['width'] != null && job['height'] != null) {
+    final width = job['width'] as int, height = job['height'] as int;
+    if (width < 1 || height < 1 || width * height > 48000000) {
+      throw StudioException('原尺寸超过本机处理范围');
+    }
+    final decoded = img.decodePng(bytes)!;
+    if (decoded.width != width || decoded.height != height) {
+      bytes = img.encodePng(
+        img.copyResize(
+          decoded,
+          width: width,
+          height: height,
+          interpolation: img.Interpolation.cubic,
+        ),
+      );
+    }
+  }
+  return {
+    'bytes': bytes,
+    'modelWidth': modelSize['width'],
+    'modelHeight': modelSize['height'],
+  };
+}
