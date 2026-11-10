@@ -75,7 +75,11 @@ void main() {
     expect(finalImage.getPixel(250, 150).r, isNot(110));
     final zero = finishLensImage({'bytes': bytes, 'style': 0, 'strength': 0.0});
     expect(img.decodePng(zero['bytes'])!.getPixel(20, 20).r, 110);
-    expect(originalPhotoRequest(7680, 4320).size, '4096x2304');
+    expect(originalPhotoRequest(7680, 4320).size, '7680x4320');
+    final bounded = originalPhotoRequest(8000, 6000);
+    expect(bounded.width * bounded.height, lessThanOrEqualTo(33554432));
+    expect(bounded.width % 16, 0);
+    expect(bounded.height % 16, 0);
     expect(AppStore().defaults.size, '4096x4096');
   });
   test('all adaptive launcher combinations have registered assets and only one default launcher', () {

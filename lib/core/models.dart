@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 enum ApiProtocol { images, gptImage, dalle, chatImage }
 
@@ -56,11 +57,20 @@ GenerationOptions photoOutputOptions(int width, int height) {
 
 GenerationOptions originalPhotoRequest(int width, int height) {
   final edge = width > height ? width : height;
-  final scale = edge > 4096 ? 4096 / edge : 1.0;
-  return GenerationOptions(
-    width: ((width * scale / 16).round() * 16).clamp(64, 4096),
-    height: ((height * scale / 16).round() * 16).clamp(64, 4096),
+  final scale = math.min(
+    1.0,
+    math.min(8192 / edge, math.sqrt(33554432 / (width * height))),
   );
+  var requestedWidth = ((width * scale / 16).round() * 16).clamp(64, 8192);
+  var requestedHeight = ((height * scale / 16).round() * 16).clamp(64, 8192);
+  while (requestedWidth * requestedHeight > 33554432) {
+    if (requestedWidth >= requestedHeight) {
+      requestedWidth -= 16;
+    } else {
+      requestedHeight -= 16;
+    }
+  }
+  return GenerationOptions(width: requestedWidth, height: requestedHeight);
 }
 
 class GenerationOptions {
