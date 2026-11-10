@@ -131,6 +131,8 @@ void main() {
       expect(find.text('模型连接'), findsOneWidget);
       expect(find.text('显示模式'), findsNothing);
       expect(find.text('我的'), findsNothing);
+      await tester.tap(find.text('个性化'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('外观'));
       await tester.pumpAndSettle();
       expect(find.text('显示模式'), findsOneWidget);
@@ -274,7 +276,7 @@ void main() {
       expect(find.text('下载并安装'), findsNothing);
       expect(find.text('V1.0.0 · 2026-11-09'), findsOneWidget);
       service.answer = uc.ReleaseInfo(
-        '1.0.3',
+        '1.0.4',
         '更新',
         'gitee',
         '',

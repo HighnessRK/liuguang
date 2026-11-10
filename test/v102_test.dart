@@ -75,7 +75,7 @@ void main() {
     expect(finalImage.getPixel(250, 150).r, isNot(110));
     final zero = finishLensImage({'bytes': bytes, 'style': 0, 'strength': 0.0});
     expect(img.decodePng(zero['bytes'])!.getPixel(20, 20).r, 110);
-    expect(originalPhotoRequest(7680, 4320).size, '7680x4320');
+    expect(originalPhotoRequest(7680, 4320).size, '4096x2304');
     final bounded = originalPhotoRequest(8000, 6000);
     expect(bounded.width * bounded.height, lessThanOrEqualTo(33554432));
     expect(bounded.width % 16, 0);
@@ -220,27 +220,25 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.text('光圈'));
-      await tester.pumpAndSettle();
       await tester.scrollUntilVisible(
-        find.bySemanticsLabel('图标颜色 violet'),
-        200,
-        scrollable: find.byType(Scrollable).first,
-      );
-      await tester.tap(find.bySemanticsLabel('图标颜色 violet'));
-      await tester.pumpAndSettle();
-      await tester.scrollUntilVisible(
-        find.text('柔软毛绒'),
+        find.text('鸢尾星云'),
         220,
         scrollable: find.byType(Scrollable).first,
       );
-      await tester.tap(find.text('柔软毛绒'));
+      await tester.ensureVisible(find.text('鸢尾星云'));
       await tester.pumpAndSettle();
+      await tester.tap(find.text('鸢尾星云'));
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.text('应用桌面图标'),
+        220,
+        scrollable: find.byType(Scrollable).first,
+      );
       await tester.ensureVisible(find.text('应用桌面图标'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('应用桌面图标'));
       await tester.pumpAndSettle();
-      expect(calls, ['aperture_violet_plush']);
+      expect(calls, ['orbit_violet_glass']);
       expect(store.launcherIcon, calls.single);
       expect(tester.takeException(), isNull);
     },
@@ -291,13 +289,32 @@ void main() {
       expect(api.receivedPrompt, contains('经典电影'));
       expect(
         (store.artworks.single.width, store.artworks.single.height),
-        (96, 64),
+        (48, 32),
       );
       expect(
         (store.artworks.single.modelWidth, store.artworks.single.modelHeight),
         (48, 32),
       );
       await tester.pump(const Duration(seconds: 6));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('人像美化'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('AI 美化'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('AI 美化'));
+      await tester.pumpAndSettle();
+      expect(find.text('开始 AI 美化'), findsOneWidget);
+      await tester.runAsync(() async {
+        await editor.cloudEdit(portrait: true);
+      });
+      await tester.pumpAndSettle();
+      expect(api.calls, 2);
+      expect(api.receivedPrompt, contains('保持原图人物身份'));
+      expect(api.receivedOptions!.resolution, '4K');
+      expect(store.artworks.first.kind, 'AI 人像美化');
+      await tester.pump(const Duration(seconds: 6));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('局部修图'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('局部修图'));
       await tester.pumpAndSettle();

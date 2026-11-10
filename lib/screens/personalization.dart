@@ -5,7 +5,7 @@ import 'package:flutter/services.dart';
 
 import '../core/store.dart';
 import '../ui/glass.dart';
-import 'settings.dart' show SettingsDetail;
+import 'settings.dart' show SettingsDetail, AppearanceSettings, settingRow;
 
 const launcherGlyphs = {
   'spark': '星芒',
@@ -60,7 +60,18 @@ class LauncherPreview extends StatelessWidget {
         color: Colors.white,
       ),
     );
-    if (!Platform.isAndroid) return fallback;
+    if (!Platform.isAndroid) {
+      return curatedIcons.containsKey(id) && id != 'default'
+          ? ClipRRect(
+              borderRadius: BorderRadius.circular(size * .24),
+              child: Image.asset(
+                'assets/icons/$id.webp',
+                width: size,
+                height: size,
+              ),
+            )
+          : fallback;
+    }
     return FutureBuilder<Uint8List?>(
       future: _previews.putIfAbsent(
         id,
@@ -128,122 +139,67 @@ class _PersonalizationSettingsState extends State<PersonalizationSettings> {
   Widget build(BuildContext context) => SettingsDetail(
     title: '个性化',
     children: [
-      const SizedBox(height: 6),
-      Center(child: LauncherPreview(id: selected, size: 112)),
-      const SizedBox(height: 14),
-      const Text(
-        '琉光',
-        textAlign: TextAlign.center,
-        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-      ),
-      const SizedBox(height: 8),
-      Text(
-        selected == 'default' ? '当前为原始图标' : '让桌面也有自己的质感',
-        textAlign: TextAlign.center,
-        style: TextStyle(fontSize: 12, color: muted(context)),
-      ),
-      const SectionLabel('图标造型'),
-      Wrap(
-        spacing: 12,
-        runSpacing: 12,
-        children: [
-          for (final entry in launcherGlyphs.entries)
-            GestureDetector(
-              onTap: saving ? null : () => choose(g: entry.key),
-              child: Container(
-                width: 72,
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                decoration: BoxDecoration(
-                  color: selected != 'default' && glyph == entry.key
-                      ? accent(context).withValues(alpha: .12)
-                      : Colors.transparent,
-                  borderRadius: BorderRadius.circular(18),
-                ),
-                child: Column(
-                  children: [
-                    LauncherPreview(
-                      id: '${entry.key}_${color}_$material',
-                      size: 54,
-                    ),
-                    const SizedBox(height: 10),
-                    Text(
-                      entry.value,
-                      style: TextStyle(fontSize: 12, color: ink(context)),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-        ],
-      ),
-      const SectionLabel('图标颜色'),
       Glass(
-        child: Wrap(
-          spacing: 16,
-          runSpacing: 16,
+        child: settingRow(
+          context,
+          Icons.palette_outlined,
+          '外观',
+          '主题氛围、深浅模式与玻璃材质',
+          () => Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => AppearanceSettings(store: widget.store),
+            ),
+          ),
+        ),
+      ),
+      const SectionLabel('桌面图标', caption: '选择完整设计'),
+      Center(child: LauncherPreview(id: selected, size: 108)),
+      const SizedBox(height: 24),
+      LayoutBuilder(
+        builder: (context, c) => Wrap(
+          spacing: 14,
+          runSpacing: 18,
           children: [
-            for (final entry in launcherColors.entries)
-              Semantics(
-                button: true,
-                label: '图标颜色 ${entry.key}',
-                selected: selected != 'default' && color == entry.key,
+            for (final entry in curatedIcons.entries)
+              SizedBox(
+                width: (c.maxWidth - 14) / 2,
                 child: GestureDetector(
-                  onTap: saving ? null : () => choose(c: entry.key),
-                  child: Container(
-                    width: 36,
-                    height: 36,
-                    decoration: BoxDecoration(
-                      color: Color(entry.value),
-                      shape: BoxShape.circle,
+                  onTap: saving
+                      ? null
+                      : () => setState(() => selected = entry.key),
+                  child: Glass(
+                    blur: false,
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      children: [
+                        LauncherPreview(id: entry.key, size: 88),
+                        const SizedBox(height: 14),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                entry.value,
+                                style: const TextStyle(fontSize: 14),
+                              ),
+                            ),
+                            if (selected == entry.key)
+                              Icon(
+                                Icons.check_circle_rounded,
+                                color: accent(context),
+                                size: 20,
+                              ),
+                          ],
+                        ),
+                      ],
                     ),
-                    child: selected != 'default' && color == entry.key
-                        ? const Icon(
-                            Icons.check_rounded,
-                            color: Colors.white,
-                            size: 20,
-                          )
-                        : null,
                   ),
                 ),
               ),
           ],
         ),
       ),
-      const SectionLabel('图标材质'),
-      Wrap(
-        spacing: 12,
-        runSpacing: 14,
-        children: [
-          for (final entry in launcherMaterials.entries)
-            GestureDetector(
-              onTap: saving ? null : () => choose(m: entry.key),
-              child: Container(
-                width: 140,
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: selected != 'default' && material == entry.key
-                      ? accent(context).withValues(alpha: .12)
-                      : Colors.transparent,
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Column(
-                  children: [
-                    LauncherPreview(
-                      id: '${glyph}_${color}_${entry.key}',
-                      size: 72,
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      entry.value,
-                      style: TextStyle(fontSize: 14, color: ink(context)),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-        ],
-      ),
-      const SizedBox(height: 26),
+      const SizedBox(height: 24),
       GlassButton(
         '应用桌面图标',
         primary: true,
@@ -264,3 +220,15 @@ class _PersonalizationSettingsState extends State<PersonalizationSettings> {
     ],
   );
 }
+
+const curatedIcons = {
+  'default': '经典琉光',
+  'orb_blue_glass': '极光之环',
+  'orbit_teal_glass': '青屿流光',
+  'orb_amber_glass': '日落鎏金',
+  'orbit_violet_glass': '鸢尾星云',
+  'orb_rose_glass': '蔷薇月色',
+  'orbit_graphite_glass': '冰川月白',
+  'spark_teal_glass': '森境微光',
+  'spark_amber_glass': '赤陶余晖',
+};

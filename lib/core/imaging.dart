@@ -436,6 +436,45 @@ const lensPrompt =
 
 const lensToneNames = ['经典电影', '暖调人像', '冷峻青蓝'];
 
+const portraitNames = ['自然柔肤', '通透提亮', '暖肤柔光', '红润肤色', '质感黑白'];
+Map<String, dynamic> beautifyPortrait(Map<String, dynamic> job) {
+  img.Decoder.defaultMaxPixels = 48000000;
+  final source = img.bakeOrientation(
+    img.decodeImage(job['bytes'] as Uint8List)!,
+  );
+  final strength = job['strength'] as double;
+  final style = job['style'] as int;
+  final soft = img.gaussianBlur(source.clone(), radius: 3);
+  if (style != 4) {
+    for (final p in source) {
+      final r = p.r.toDouble(), g = p.g.toDouble(), b = p.b.toDouble();
+      final cb = 128 - .168736 * r - .331264 * g + .5 * b,
+          cr = 128 + .5 * r - .418688 * g - .081312 * b;
+      if (cb > 76 && cb < 128 && cr > 132 && cr < 177 && r > g && r > 50) {
+        final q = soft.getPixel(p.x, p.y);
+        final delta = ((r - q.r).abs() + (g - q.g).abs() + (b - q.b).abs()) / 3;
+        final weight = strength * .5 * (1 - delta / 35).clamp(0.0, 1.0);
+        p.r = r * (1 - weight) + q.r * weight;
+        p.g = g * (1 - weight) + q.g * weight;
+        p.b = b * (1 - weight) + q.b * weight;
+      }
+    }
+  }
+  final tone = Adjustments();
+  tone.values[0] = (style == 1 ? 0.18 : 0.06) * strength;
+  tone.values[2] = -.12 * strength;
+  tone.values[3] = .10 * strength;
+  tone.values[4] = (style == 4 ? 0.23 : 0.06) * strength;
+  tone.values[7] = style == 4 ? -strength : 0;
+  tone.values[9] = style == 2 ? 0.17 * strength : 0;
+  tone.values[10] = style == 3 ? 0.1 * strength : 0;
+  return processImage({
+    'bytes': img.encodePng(source),
+    'adjustments': tone.toJson(),
+    'format': 'png',
+  });
+}
+
 Adjustments lensTone(int style, double strength) {
   final s = strength.clamp(0.0, 1.0);
   final tone = Adjustments();

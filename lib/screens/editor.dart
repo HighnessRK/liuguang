@@ -14,7 +14,6 @@ import '../core/imaging.dart';
 import '../core/models.dart';
 import '../core/store.dart';
 import '../ui/glass.dart';
-import 'create.dart' show GenerationSettings;
 
 class EditorScreen extends StatefulWidget {
   final AppStore store;
@@ -81,7 +80,10 @@ class _EditorScreenState extends State<EditorScreen> {
   final editPrompt = TextEditingController();
   List<_Stroke> strokes = [];
   double brush = .075;
-  GenerationOptions? cloudOptions;
+  int cloudEdge = 4096;
+  bool portraitAI = false;
+  int portraitStyle = 0;
+  double portraitStrength = .55;
   int lensStyle = 0;
   double lensStrength = .72;
   Rect crop = const Rect.fromLTWH(0, 0, 1, 1);
@@ -352,7 +354,7 @@ class _EditorScreenState extends State<EditorScreen> {
     return bytes;
   }
 
-  Future<void> cloudEdit({bool lens = false}) async {
+  Future<void> cloudEdit({bool lens = false, bool portrait = false}) async {
     if (path == null || busy) {
       return;
     }
@@ -360,20 +362,23 @@ class _EditorScreenState extends State<EditorScreen> {
       widget.onSettings();
       return;
     }
-    if (!lens && !strokes.any((s) => !s.erase)) {
+    if (!lens && !portrait && !strokes.any((s) => !s.erase)) {
       toast(context, '先涂抹需要修改的区域');
       return;
     }
-    if (!lens && editPrompt.text.trim().isEmpty) {
+    if (!lens && !portrait && editPrompt.text.trim().isEmpty) {
       toast(context, '请描述选区需要怎样修改');
       return;
     }
     FocusManager.instance.primaryFocus?.unfocus();
     final model = widget.store.imageApi.model;
     final originalWidth = image!.width, originalHeight = image!.height;
-    final requestOptions =
-        cloudOptions ?? originalPhotoRequest(originalWidth, originalHeight);
-    final preserveCanvas = cloudOptions == null;
+    final requestOptions = matchedPhotoOptions(
+      originalWidth,
+      originalHeight,
+      edge: cloudEdge,
+    );
+
     final toneStyle = lensStyle, toneStrength = lensStrength;
     beginTask(lens ? '正在准备增强副本' : '正在准备选区');
     token = CancelToken();
@@ -381,8 +386,8 @@ class _EditorScreenState extends State<EditorScreen> {
       final normalized = await renderEdited(
         path!,
         a,
-        maxEdge: lens ? 2048 : null,
-        format: lens ? 'jpeg' : 'png',
+        maxEdge: lens || portrait ? 2048 : null,
+        format: lens || portrait ? 'jpeg' : 'png',
         quality: 92,
       );
       if (token!.isCancelled) throw token!.cancelError!;
@@ -390,8 +395,10 @@ class _EditorScreenState extends State<EditorScreen> {
         normalized['bytes'],
         imageExtension(normalized['bytes']),
       );
-      final mask = lens ? null : await maskBytes();
-      final instruction = lens
+      final mask = lens || portrait ? null : await maskBytes();
+      final instruction = portrait
+          ? '人像美化：${portraitNames[portraitStyle]}，强度 ${(portraitStrength * 100).round()}%。保持原图人物身份、年龄、肤色特征、五官比例、发丝、动作、服装、背景与构图。仅作自然皮肤质感、瑕疵淡化和光影优化，保留毛孔与真实肌理，避免塑料皮肤，不新增人物或改变身形。${["温和柔肤与淡化细小瑕疵", "均衡人脸曝光，通透提亮而不过曝", "温暖肤色与柔和人像补光", "自然改善气色，克制的红润肤色", "细腻黑白人像，保留丰富灰阶与立体光影"][portraitStyle]}。'
+          : lens
           ? '$lensPrompt\n影调方向：${lensToneNames[toneStyle]}，影调强度 ${(toneStrength * 100).round()}%，明暗层次鲜明、色彩分离自然，避免平淡灰雾。'
           : '${editPrompt.text}\n\n仅修改蒙版透明区域。保持其余区域的主体、人物身份、构图与光照，不添加额外元素。';
       final response = await widget.api.generate(
@@ -400,15 +407,18 @@ class _EditorScreenState extends State<EditorScreen> {
           width: requestOptions.width,
           height: requestOptions.height,
           count: 1,
-          quality: cloudOptions?.quality ?? 'high',
+          quality: 'high',
           format: 'png',
-          moderation:
-              cloudOptions?.moderation ?? widget.store.defaults.moderation,
+          moderation: widget.store.defaults.moderation,
         ),
         inputs: [source],
         mask: mask,
         cancelToken: token,
-        operation: lens ? '云端景深增强' : '局部修图',
+        operation: portrait
+            ? 'AI 人像美化'
+            : lens
+            ? '云端景深增强'
+            : '局部修图',
         onStage: (stage) {
           if (mounted && activity != stage) setState(() => activity = stage);
         },
@@ -421,8 +431,6 @@ class _EditorScreenState extends State<EditorScreen> {
           'bytes': result,
           'style': toneStyle,
           'strength': toneStrength,
-          if (preserveCanvas) 'width': originalWidth,
-          if (preserveCanvas) 'height': originalHeight,
         });
         result = finished['bytes'];
         modelWidth = finished['modelWidth'];
@@ -442,7 +450,11 @@ class _EditorScreenState extends State<EditorScreen> {
         result,
         prompt: instruction,
         model: model,
-        kind: lens ? '景深增强' : '局部修图',
+        kind: portrait
+            ? 'AI 人像美化'
+            : lens
+            ? '景深增强'
+            : '局部修图',
         modelWidth: modelWidth,
         modelHeight: modelHeight,
       );
@@ -499,6 +511,89 @@ class _EditorScreenState extends State<EditorScreen> {
       }
     }
   }
+
+  Future<void> applyPortrait() async {
+    if (path == null || busy) return;
+    beginTask('正在本机精修人像…');
+    try {
+      final original = await renderEdited(path!, a);
+      final result = await compute(beautifyPortrait, {
+        'bytes': original['bytes'],
+        'style': portraitStyle,
+        'strength': portraitStrength,
+      });
+      final next = await widget.store.writeImage(result['bytes'], 'png');
+      remember();
+      await load(next, reset: false);
+      if (mounted) setState(() => a = Adjustments());
+    } catch (e) {
+      if (mounted) toast(context, describeError(e));
+    } finally {
+      taskTicker?.cancel();
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Widget portraitControls() => Glass(
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text(
+          '人像美化',
+          style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 12),
+        Text(
+          portraitAI ? '通过生图模型精修 · 保留人物身份' : '本机处理 · 自然肤色与细腻肌理',
+          style: TextStyle(fontSize: 14, color: muted(context)),
+        ),
+        const SizedBox(height: 22),
+        GlassSegments(
+          labels: const ['本机处理', 'AI 美化'],
+          selected: portraitAI ? 1 : 0,
+          onChanged: (i) => setState(() => portraitAI = i == 1),
+        ),
+        const SizedBox(height: 22),
+        Wrap(
+          spacing: 10,
+          runSpacing: 12,
+          children: [
+            for (var i = 0; i < portraitNames.length; i++)
+              GlassButton(
+                portraitNames[i],
+                small: true,
+                primary: portraitStyle == i,
+                onTap: () => setState(() => portraitStyle = i),
+              ),
+          ],
+        ),
+        const SizedBox(height: 24),
+        GlassSlider(
+          label: '美化强度',
+          value: portraitStrength,
+          min: 0,
+          max: 1,
+          onChanged: (v) => setState(() => portraitStrength = v),
+        ),
+        const SizedBox(height: 24),
+        GlassButton(
+          portraitAI ? '开始 AI 美化' : '应用人像美化',
+          primary: true,
+          onTap: busy
+              ? null
+              : portraitAI
+              ? () => cloudEdit(portrait: true)
+              : applyPortrait,
+        ),
+        if (portraitAI) cloudSpecifications(),
+        const SizedBox(height: 16),
+        Text(
+          '柔肤依据肤色保护边缘，不改变五官与身形；可撤销，导出为副本。',
+          style: TextStyle(fontSize: 12, height: 1.7, color: muted(context)),
+        ),
+      ],
+    ),
+  );
 
   void ratio(int i) {
     final ratios = [
@@ -611,52 +706,65 @@ class _EditorScreenState extends State<EditorScreen> {
           const SizedBox(height: 14),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: Row(
-              children: [
-                for (final i in [4, 0, 1, 2, 3])
-                  Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 3),
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: busy ? null : () => setState(() => tool = i),
-                        child: Glass(
-                          radius: 18,
-                          padding: const EdgeInsets.symmetric(vertical: 10),
-                          tint: tool == i ? accent(context) : null,
-                          opacity: tool == i ? .65 : null,
-                          child: Column(
-                            children: [
-                              Icon(
-                                [
-                                  Icons.tune_rounded,
-                                  Icons.palette_outlined,
-                                  Icons.crop_rounded,
-                                  Icons.brush_outlined,
-                                  Icons.auto_awesome_rounded,
-                                ][i],
-                                size: 22,
-                                color: tool == i
-                                    ? primaryOn(context)
-                                    : ink(context),
-                              ),
-                              const SizedBox(height: 5),
-                              Text(
-                                ['调色', '色彩平衡', '裁切', '局部修图', '传奇二瞬'][i],
-                                style: TextStyle(
-                                  fontSize: 11,
+            child: SizedBox(
+              height: 82,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                children: [
+                  for (final i in [4, 5, 0, 1, 2, 3])
+                    SizedBox(
+                      width: 64,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 3),
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: busy ? null : () => setState(() => tool = i),
+                          child: Glass(
+                            radius: 18,
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            tint: tool == i ? accent(context) : null,
+                            opacity: tool == i ? .65 : null,
+                            child: Column(
+                              children: [
+                                Icon(
+                                  [
+                                    Icons.tune_rounded,
+                                    Icons.palette_outlined,
+                                    Icons.crop_rounded,
+                                    Icons.brush_outlined,
+                                    Icons.auto_awesome_rounded,
+                                    Icons.face_retouching_natural,
+                                  ][i],
+                                  size: 22,
                                   color: tool == i
                                       ? primaryOn(context)
                                       : ink(context),
                                 ),
-                              ),
-                            ],
+                                const SizedBox(height: 5),
+                                Text(
+                                  [
+                                    '调色',
+                                    '色彩平衡',
+                                    '裁切',
+                                    '局部修图',
+                                    '传奇二瞬',
+                                    '人像美化',
+                                  ][i],
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: tool == i
+                                        ? primaryOn(context)
+                                        : ink(context),
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
-              ],
+                ],
+              ),
             ),
           ),
           const SizedBox(height: 16),
@@ -688,6 +796,7 @@ class _EditorScreenState extends State<EditorScreen> {
                           1 => balanceControls(),
                           2 => cropControls(),
                           3 => maskControls(),
+                          5 => portraitControls(),
                           _ => lensControls(),
                         },
                       ),
@@ -1115,62 +1224,48 @@ class _EditorScreenState extends State<EditorScreen> {
     ),
   );
 
-  Widget cloudSpecifications() => Padding(
-    padding: const EdgeInsets.only(top: 12),
-    child: GlassButton(
-      cloudOptions == null
-          ? '输出规格 · 原尺寸 ${image?.width ?? 0} × ${image?.height ?? 0}'
-          : '输出规格 · ${cloudOptions!.resolution} · ${cloudOptions!.aspectLabel}',
-      small: true,
-      icon: Icons.aspect_ratio_rounded,
-      onTap: () async {
-        final choice = await glassSheet<String>(
-          context,
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Text(
-                '输出尺寸',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 24),
-              GlassButton(
-                '原尺寸 · ${image!.width} × ${image!.height}',
-                primary: cloudOptions == null,
-                onTap: () => Navigator.pop(context, 'original'),
-              ),
-              const SizedBox(height: 14),
-              GlassButton(
-                '自定义规格',
-                onTap: () => Navigator.pop(context, 'custom'),
-              ),
-              const SizedBox(height: 18),
-              Text(
-                '原尺寸保持最终画布大小。模型返回较小时会还原到原画布，实际模型输出像素会记录在作品详情。',
-                style: TextStyle(
-                  fontSize: 12,
-                  height: 1.7,
-                  color: muted(context),
+  Widget cloudSpecifications() {
+    final o = matchedPhotoOptions(image!.width, image!.height, edge: cloudEdge);
+    return Padding(
+      padding: const EdgeInsets.only(top: 18),
+      child: GlassButton(
+        '输出规格 · ${o.resolution} · ${o.aspectLabel}',
+        small: true,
+        icon: Icons.aspect_ratio_rounded,
+        onTap: () async {
+          final edge = await glassSheet<int>(
+            context,
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  '输出规格',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
                 ),
-              ),
-            ],
-          ),
-        );
-        if (!mounted || choice == null) return;
-        if (choice == 'original') {
-          setState(() => cloudOptions = null);
-          return;
-        }
-        final selected = await glassSheet<GenerationOptions>(
-          context,
-          GenerationSettings(initial: cloudOptions ?? widget.store.defaults),
-        );
-        if (selected != null && mounted) {
-          setState(() => cloudOptions = selected);
-        }
-      },
-    ),
-  );
+                const SizedBox(height: 16),
+                Text(
+                  '按原图自动匹配 ${o.aspectLabel} 比例',
+                  style: TextStyle(color: muted(context), fontSize: 14),
+                ),
+                const SizedBox(height: 24),
+                for (final k in [1, 2, 4]) ...[
+                  GlassButton(
+                    '${k}K',
+                    primary: o.resolution == '${k}K',
+                    onTap: () => Navigator.pop(context, k * 1024),
+                  ),
+                  const SizedBox(height: 14),
+                ],
+              ],
+            ),
+          );
+          if (edge != null && mounted) {
+            setState(() => cloudEdge = edge);
+          }
+        },
+      ),
+    );
+  }
 
   Widget maskControls() => Glass(
     child: Column(

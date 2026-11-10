@@ -7,8 +7,12 @@ import 'package:path_provider/path_provider.dart';
 
 import 'store.dart';
 
-const appVersion = '1.0.2';
-const releaseNotes = '''新增：六大类 32 种材质与离线预览，包含光透与毛绒。
+const appVersion = '1.0.3';
+const releaseNotes = '''新增：本机人像美化预设，支持自然柔肤、提亮、暖肤、红润和黑白。
+优化：传奇二瞬自动匹配原图比例，仅提供 1K / 2K / 4K，默认 4K。
+优化：外观收纳到个性化，桌面图标改为完整渐变设计。
+优化：更新弹窗使用分类标签，隐私与开源许可采用统一玻璃卡片布局。''';
+const releaseNotesV102 = '''新增：六大类 32 种材质与离线预览，包含光透与毛绒。
 新增：八套完整渐变主题，桌面图标支持造型、颜色与材质组合。
 优化：生成默认 4K，传奇二瞬默认原尺寸画布，增加三种影调和强度。
 修复：提示词尾部冗余、滑条与选框拥挤、色彩端点模糊。''';

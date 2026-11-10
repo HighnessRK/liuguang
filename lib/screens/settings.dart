@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../core/api.dart';
@@ -59,14 +60,6 @@ class SettingsScreen extends StatelessWidget {
             _line(context),
             settingRow(
               context,
-              Icons.palette_outlined,
-              '外观',
-              '显示模式、主题色与材质',
-              () => open(context, AppearanceSettings(store: store)),
-            ),
-            _line(context),
-            settingRow(
-              context,
               Icons.touch_app_outlined,
               '交互与辅助',
               '触感、动效与文字可读性',
@@ -77,7 +70,7 @@ class SettingsScreen extends StatelessWidget {
               context,
               Icons.auto_awesome_mosaic_outlined,
               '个性化',
-              '桌面图标、颜色与材质',
+              '外观主题与桌面图标',
               () => open(context, PersonalizationSettings(store: store)),
             ),
           ],
@@ -147,11 +140,15 @@ class SettingsDetail extends StatelessWidget {
                   onTap: () => Navigator.pop(context),
                 ),
                 const SizedBox(width: 16),
-                Text(
-                  title,
-                  style: const TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.w600,
+                Expanded(
+                  child: Text(
+                    title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
               ],
@@ -977,10 +974,9 @@ class AboutStudio extends StatelessWidget {
               Icons.code_rounded,
               '开源许可',
               '感谢开源社区',
-              () => showLicensePage(
-                context: context,
-                applicationName: '琉光',
-                applicationVersion: 'V$appVersion',
+              () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const StudioLicensesScreen()),
               ),
             ),
           ],
@@ -996,14 +992,194 @@ class PrivacyInfo extends StatelessWidget {
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
-      const Text(
-        '创作数据，由你掌握',
-        style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
+      const InfoHero(
+        icon: Icons.shield_outlined,
+        title: '创作由你掌握',
+        subtitle: '清楚知道每一份数据去向',
       ),
-      const SizedBox(height: 18),
-      const StudioSelectable(
-        'API Key 使用 Android Keystore 加密保存在本机，不写入作品、统计和导出文件。\n\n本地调色、裁切、GIF 合成与本地虚化不上传照片。执行生成、云端编辑、景深增强或对话时，仅向你配置的服务发送所需提示词与图片。\n\n作品和对话记录保存在应用私有目录。卸载会删除本机数据，请先保存重要作品到系统相册。应用不含广告和遥测 SDK。\n\n费用为本机按自定义单价估算，不等于服务端账单。审核偏好不能覆盖服务端政策。',
-        style: TextStyle(fontSize: 14, height: 1.9),
+      for (final item in [
+        (
+          Icons.key_rounded,
+          '密钥只留本机',
+          'API Key 由 Android Keystore 加密保存，不写入作品、使用明细或导出文件。',
+        ),
+        (Icons.photo_outlined, '本地处理，无需上传', '调色、裁切、GIF、本地虚化与人像美化均在手机完成。'),
+        (
+          Icons.cloud_outlined,
+          '云端请求，由你发起',
+          '仅在生成、云端编辑、景深增强或对话时，将所需文字和图片发送给你配置的服务。',
+        ),
+        (
+          Icons.folder_outlined,
+          '保留自己的作品',
+          '作品和对话保存在应用私有目录，卸载会删除这些本机数据，请先将重要作品保存到相册。',
+        ),
+        (
+          Icons.receipt_long_outlined,
+          '统计清楚，费用透明',
+          '本机费用按自定义单价估算，不等于服务端账单。应用不含广告与遥测 SDK，审核偏好不能覆盖服务政策。',
+        ),
+      ])
+        Padding(
+          padding: const EdgeInsets.only(bottom: 16),
+          child: InfoCard(icon: item.$1, title: item.$2, text: item.$3),
+        ),
+    ],
+  );
+}
+
+class InfoHero extends StatelessWidget {
+  final IconData icon;
+  final String title, subtitle;
+  const InfoHero({
+    super.key,
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+  });
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 28),
+    child: Column(
+      children: [
+        Container(
+          width: 72,
+          height: 72,
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                accent(context),
+                Color.lerp(accent(context), const Color(0xffb79ae7), .6)!,
+              ],
+            ),
+            borderRadius: BorderRadius.circular(24),
+          ),
+          child: Icon(icon, color: Colors.white, size: 34),
+        ),
+        const SizedBox(height: 18),
+        Text(
+          title,
+          style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 10),
+        Text(subtitle, style: TextStyle(fontSize: 14, color: muted(context))),
+      ],
+    ),
+  );
+}
+
+class InfoCard extends StatelessWidget {
+  final IconData icon;
+  final String title, text;
+  const InfoCard({
+    super.key,
+    required this.icon,
+    required this.title,
+    required this.text,
+  });
+  @override
+  Widget build(BuildContext context) => Glass(
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(icon, size: 22, color: accent(context)),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        StudioSelectable(
+          text,
+          style: TextStyle(fontSize: 14, height: 1.8, color: muted(context)),
+        ),
+      ],
+    ),
+  );
+}
+
+class StudioLicensesScreen extends StatefulWidget {
+  const StudioLicensesScreen({super.key});
+  @override
+  State<StudioLicensesScreen> createState() => _StudioLicensesScreenState();
+}
+
+class _StudioLicensesScreenState extends State<StudioLicensesScreen> {
+  final future = LicenseRegistry.licenses.toList();
+  @override
+  Widget build(BuildContext context) => SettingsDetail(
+    title: '开源许可',
+    children: [
+      const InfoHero(
+        icon: Icons.code_rounded,
+        title: '与开源同行',
+        subtitle: '每一份贡献，都值得被看见',
+      ),
+      FutureBuilder<List<LicenseEntry>>(
+        future: future,
+        builder: (context, snapshot) {
+          if (!snapshot.hasData) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          final grouped = <String, List<LicenseEntry>>{};
+          for (final entry in snapshot.data!) {
+            for (final package in entry.packages) {
+              (grouped[package] ??= []).add(entry);
+            }
+          }
+          final names = grouped.keys.toList()..sort();
+          return Column(
+            children: [
+              for (final name in names)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Glass(
+                    child: settingRow(
+                      context,
+                      Icons.inventory_2_outlined,
+                      name,
+                      '查看许可证',
+                      () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => SettingsDetail(
+                            title: name,
+                            children: [
+                              for (final entry in grouped[name]!)
+                                Padding(
+                                  padding: const EdgeInsets.only(bottom: 18),
+                                  child: Glass(
+                                    child: StudioSelectable(
+                                      entry.paragraphs
+                                          .map((p) => p.text)
+                                          .join('\n\n'),
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        height: 1.8,
+                                        color: muted(context),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          );
+        },
       ),
     ],
   );

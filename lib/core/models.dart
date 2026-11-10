@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:math' as math;
 
 enum ApiProtocol { images, gptImage, dalle, chatImage }
 
@@ -56,21 +55,26 @@ GenerationOptions photoOutputOptions(int width, int height) {
 }
 
 GenerationOptions originalPhotoRequest(int width, int height) {
-  final edge = width > height ? width : height;
-  final scale = math.min(
-    1.0,
-    math.min(8192 / edge, math.sqrt(33554432 / (width * height))),
+  return matchedPhotoOptions(width, height);
+}
+
+GenerationOptions matchedPhotoOptions(
+  int width,
+  int height, {
+  int edge = 4096,
+}) {
+  const ratios = [(1, 1), (3, 4), (4, 3), (2, 3), (3, 2), (9, 16), (16, 9)];
+  final sorted = ratios.toList()
+    ..sort(
+      (a, b) => (width / height - a.$1 / a.$2).abs().compareTo(
+        (width / height - b.$1 / b.$2).abs(),
+      ),
+    );
+  final r = sorted.first;
+  return GenerationOptions(
+    width: r.$1 >= r.$2 ? edge : (edge * r.$1 / r.$2 / 16).round() * 16,
+    height: r.$2 >= r.$1 ? edge : (edge * r.$2 / r.$1 / 16).round() * 16,
   );
-  var requestedWidth = ((width * scale / 16).round() * 16).clamp(64, 8192);
-  var requestedHeight = ((height * scale / 16).round() * 16).clamp(64, 8192);
-  while (requestedWidth * requestedHeight > 33554432) {
-    if (requestedWidth >= requestedHeight) {
-      requestedWidth -= 16;
-    } else {
-      requestedHeight -= 16;
-    }
-  }
-  return GenerationOptions(width: requestedWidth, height: requestedHeight);
 }
 
 class GenerationOptions {

@@ -220,14 +220,16 @@ class _ReleaseCardState extends State<ReleaseCard> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Text(
-          widget.release.version,
+          '琉光 V${widget.release.version.replaceFirst(RegExp(r"^[vV]"), "")}',
           style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
         Text(
-          widget.release.notes,
-          style: const TextStyle(fontSize: 14, height: 1.7),
+          '为每一次创作，带来更好的体验',
+          style: TextStyle(fontSize: 12, color: muted(context)),
         ),
+        const SizedBox(height: 18),
+        ReleaseNotesView(notes: widget.release.notes),
         const SizedBox(height: 16),
         if (token != null) ...[
           LinearProgressIndicator(value: total > 0 ? received / total : null),
@@ -270,6 +272,7 @@ class _VersionLogState extends State<VersionLog> {
     children: [
       for (final entry in [
         (appVersion, releaseNotes, '2026-11-10'),
+        ('1.0.2', releaseNotesV102, '2026-11-10'),
         ('1.0.1', releaseNotesV101, '2026-11-09'),
         ('1.0.0', previousReleaseNotes, '2026-11-09'),
       ])
@@ -315,29 +318,7 @@ class _VersionLogState extends State<VersionLog> {
                                 child: Row(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 7,
-                                        vertical: 3,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: changeTagColor(
-                                          line.substring(0, 2),
-                                          isDark(context),
-                                        ).withValues(alpha: .12),
-                                        borderRadius: BorderRadius.circular(7),
-                                      ),
-                                      child: Text(
-                                        line.substring(0, 2),
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          color: changeTagColor(
-                                            line.substring(0, 2),
-                                            isDark(context),
-                                          ),
-                                        ),
-                                      ),
-                                    ),
+                                    ChangeTag(type: line.substring(0, 2)),
                                     const SizedBox(width: 10),
                                     Expanded(
                                       child: Text(
@@ -421,4 +402,62 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
       ),
     ],
   );
+}
+
+class ReleaseNotesView extends StatelessWidget {
+  final String notes;
+  const ReleaseNotesView({super.key, required this.notes});
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      for (final raw in notes.split('\n').where((s) => s.trim().isNotEmpty))
+        Builder(
+          builder: (context) {
+            final line = raw.replaceFirst(RegExp(r'^[-*#\s]+'), '').trim();
+            final match = RegExp(r'^(新增|修复|优化)[：: ]*').firstMatch(line);
+            final tag = match?.group(1);
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 9),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (tag != null) ...[
+                    ChangeTag(type: tag),
+                    const SizedBox(width: 12),
+                  ],
+                  Expanded(
+                    child: Text(
+                      match == null ? line : line.substring(match.end),
+                      style: TextStyle(
+                        fontSize: 14,
+                        height: 1.7,
+                        color: ink(context),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+    ],
+  );
+}
+
+class ChangeTag extends StatelessWidget {
+  final String type;
+  const ChangeTag({super.key, required this.type});
+  @override
+  Widget build(BuildContext context) {
+    final color = changeTagColor(type, isDark(context));
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: .12),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(type, style: TextStyle(fontSize: 12, color: color)),
+    );
+  }
 }
