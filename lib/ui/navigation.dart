@@ -93,88 +93,92 @@ class _LiquidNavigationState extends State<LiquidNavigation>
               setState(() => dragging = false);
               settle(widget.selected, notify: false);
             },
-            child: Glass(
-              radius: 99,
-              separateLayer: true,
-              opacity: isDark(context) ? .28 : .18,
-              refraction: 1.8,
-              padding: const EdgeInsets.all(4),
-              child: AnimatedBuilder(
-                animation: position,
-                builder: (context, _) {
-                  final slot = (width - 8) / 4;
-                  return Stack(
-                    clipBehavior: Clip.none,
-                    children: [
-                      Positioned(
-                        left: slot * position.value.clamp(0.0, 3.0),
-                        top: 0,
-                        bottom: 0,
-                        width: slot,
-                        child: Transform.scale(
-                          scaleX: dragging ? 1.06 : 1,
-                          scaleY: dragging ? .96 : 1,
-                          child: Glass(
-                            radius: 99,
-                            opacity: isDark(context) ? .32 : .36,
-                            refraction: 2.4,
-                            tint: accent(context),
-                            padding: EdgeInsets.zero,
-                            child: const SizedBox.expand(),
-                          ),
-                        ),
-                      ),
-                      Row(
-                        children: List.generate(4, (i) {
-                          final intensity = (1 - (position.value - i).abs())
-                              .clamp(0.0, 1.0);
-                          final color = Color.lerp(
-                            muted(context),
-                            accentInk(context),
-                            intensity,
-                          )!;
-                          return Expanded(
-                            child: Semantics(
-                              button: true,
-                              selected: widget.selected == i,
-                              label: ['创作', '修图', '作品', '设置'][i],
-                              onTap: () => settle(i),
-                              child: ExcludeSemantics(
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Icon(
-                                      [
-                                        Icons.auto_awesome_outlined,
-                                        Icons.tune_rounded,
-                                        Icons.grid_view_outlined,
-                                        Icons.settings_outlined,
-                                      ][i],
-                                      size: 21,
-                                      color: color,
-                                    ),
-                                    const SizedBox(height: 3),
-                                    Text(
-                                      ['创作', '修图', '作品', '设置'][i],
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        height: 1.1,
-                                        fontWeight: intensity > .5
-                                            ? FontWeight.w600
-                                            : FontWeight.w400,
-                                        color: color,
-                                      ),
-                                    ),
-                                  ],
-                                ),
+            child: BackdropGroup(
+              child: Glass(
+                radius: 99,
+                separateLayer: true,
+                opacity: isDark(context) ? .28 : .18,
+                refraction: 1.8,
+                padding: const EdgeInsets.all(4),
+                child: AnimatedBuilder(
+                  animation: position,
+                  builder: (context, _) {
+                    final slot = (width - 8) / 4;
+                    return Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        Positioned(
+                          left: slot * position.value.clamp(0.0, 3.0),
+                          top: 0,
+                          bottom: 0,
+                          width: slot,
+                          child: Transform.scale(
+                            scaleX: dragging ? 1.06 : 1,
+                            scaleY: dragging ? .96 : 1,
+                            child: BackdropGroup(
+                              child: Glass(
+                                radius: 99,
+                                opacity: isDark(context) ? .32 : .36,
+                                refraction: 2.4,
+                                tint: accent(context),
+                                padding: EdgeInsets.zero,
+                                child: const SizedBox.expand(),
                               ),
                             ),
-                          );
-                        }),
-                      ),
-                    ],
-                  );
-                },
+                          ),
+                        ),
+                        Row(
+                          children: List.generate(4, (i) {
+                            final intensity = (1 - (position.value - i).abs())
+                                .clamp(0.0, 1.0);
+                            final color = Color.lerp(
+                              muted(context),
+                              accentInk(context),
+                              intensity,
+                            )!;
+                            return Expanded(
+                              child: Semantics(
+                                button: true,
+                                selected: widget.selected == i,
+                                label: ['创作', '修图', '作品', '设置'][i],
+                                onTap: () => settle(i),
+                                child: ExcludeSemantics(
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(
+                                        [
+                                          Icons.auto_awesome_outlined,
+                                          Icons.tune_rounded,
+                                          Icons.grid_view_outlined,
+                                          Icons.settings_outlined,
+                                        ][i],
+                                        size: 21,
+                                        color: color,
+                                      ),
+                                      const SizedBox(height: 3),
+                                      Text(
+                                        ['创作', '修图', '作品', '设置'][i],
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          height: 1.1,
+                                          fontWeight: intensity > .5
+                                              ? FontWeight.w600
+                                              : FontWeight.w400,
+                                          color: color,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            );
+                          }),
+                        ),
+                      ],
+                    );
+                  },
+                ),
               ),
             ),
           ),

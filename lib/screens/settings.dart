@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
@@ -7,6 +9,8 @@ import '../core/store.dart';
 import '../core/appearance.dart';
 import '../ui/theme_preview.dart';
 import 'personalization.dart';
+import 'vision.dart';
+import 'storage.dart';
 import '../ui/glass.dart';
 import 'create.dart';
 import 'usage.dart';
@@ -32,7 +36,7 @@ class SettingsScreen extends StatelessWidget {
               context,
               Icons.hub_outlined,
               '模型连接',
-              '生图与对话接口',
+              '生图、对话与识图',
               () => open(context, ConnectionScreen(store: store, api: api)),
             ),
             _line(context),
@@ -87,6 +91,14 @@ class SettingsScreen extends StatelessWidget {
               '使用明细',
               'Token、费用与调用记录',
               () => open(context, UsageScreen(store: store)),
+            ),
+            _line(context),
+            settingRow(
+              context,
+              Icons.storage_rounded,
+              '存储管理',
+              '作品体积与临时缓存',
+              () => open(context, StorageSettings(store: store)),
             ),
             _line(context),
             settingRow(
@@ -438,8 +450,38 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
   bool imageVisible = false, chatVisible = false, saving = false;
   String? imageStatus, chatStatus;
   int tab = 0;
+  Timer? autosave;
+  @override
+  void initState() {
+    super.initState();
+    for (final controller in [
+      imageUrl,
+      imageKey,
+      imageModel,
+      chatUrl,
+      chatKey,
+      chatModel,
+    ]) {
+      controller.addListener(scheduleSave);
+    }
+  }
+
+  void scheduleSave() {
+    autosave?.cancel();
+    autosave = Timer(const Duration(milliseconds: 350), persistConnection);
+  }
+
+  Future<void> persistConnection() async {
+    sync();
+    widget.store.imageApi = image;
+    widget.store.chatApi = chat;
+    await widget.store.saveSettings(keys: true);
+  }
+
   @override
   void dispose() {
+    autosave?.cancel();
+    if (autosave != null) persistConnection();
     for (final c in [
       imageUrl,
       imageKey,
@@ -582,187 +624,172 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
   @override
   Widget build(BuildContext context) {
     final isImage = tab == 0, config = isImage ? image : chat;
-    return Scaffold(
-      body: StudioBackground(
-        child: SafeArea(
-          child: ListView(
-            padding: const EdgeInsets.all(22),
-            children: [
-              Align(
-                alignment: Alignment.centerLeft,
-                child: GlassIcon(
-                  Icons.arrow_back_rounded,
-                  tooltip: '返回',
-                  onTap: () => Navigator.pop(context),
-                ),
-              ),
-              const PageHeader(title: '模型连接'),
-              GlassSegments(
-                labels: const ['生图模型', '对话模型'],
-                selected: tab,
-                onChanged: (v) => setState(() => tab = v),
-              ),
-              const SectionLabel('API 基础地址'),
-              GlassField(
-                controller: isImage ? imageUrl : chatUrl,
-                hint: 'https://your-provider.com/v1',
-                keyboard: TextInputType.url,
-              ),
-              const SectionLabel('API Key'),
-              GlassField(
-                controller: isImage ? imageKey : chatKey,
-                hint: '填入这组模型的独立 Key',
-                obscure: !(isImage ? imageVisible : chatVisible),
-                suffix: IconButton(
-                  icon: Icon(
-                    (isImage ? imageVisible : chatVisible)
-                        ? Icons.visibility_off_outlined
-                        : Icons.visibility_outlined,
-                    size: 20,
-                  ),
-                  onPressed: () => setState(() {
-                    if (isImage) {
-                      imageVisible = !imageVisible;
-                    } else {
-                      chatVisible = !chatVisible;
-                    }
-                  }),
-                ),
-              ),
-              SectionLabel(
-                '模型 ID',
-                action: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: () => choose(isImage),
-                  child: Text(
-                    '模型列表 (${config.models.length})',
-                    style: TextStyle(fontSize: 12, color: accentInk(context)),
-                  ),
-                ),
-              ),
-              GlassField(
-                controller: isImage ? imageModel : chatModel,
-                hint: '自动检测后选择，或手动填写精确 ID',
-              ),
-              const SizedBox(height: 14),
-              GlassButton(
-                '检测全部可用模型',
-                small: true,
-                icon: Icons.radar_rounded,
-                onTap: saving ? null : () => discover(isImage),
-              ),
-              if ((isImage ? imageStatus : chatStatus) != null) ...[
-                const SizedBox(height: 12),
-                StudioSelectable(
-                  (isImage ? imageStatus : chatStatus)!,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: muted(context),
-                    height: 1.8,
-                  ),
-                ),
-              ],
-              const SizedBox(height: 12),
-              Text(
-                '读取 GET /models，完整列出服务端返回的模型。模型名称仅用于初选，列表通常不提供能力信息，请按服务商文档选择生图或对话模型。',
-                style: TextStyle(
-                  fontSize: 12,
-                  height: 1.8,
-                  color: muted(context),
-                ),
-              ),
-              if (isImage) ...[
-                const SectionLabel('图片协议'),
-                Glass(
-                  child: RadioGroup<ApiProtocol>(
-                    groupValue: image.protocol,
-                    onChanged: (v) => setState(() => image.protocol = v!),
-                    child: Column(
-                      children: [
-                        for (final protocol in ApiProtocol.values)
-                          RadioListTile<ApiProtocol>(
-                            dense: true,
-                            contentPadding: EdgeInsets.zero,
-                            value: protocol,
-                            title: Text(
-                              _protocolTitle(protocol),
-                              style: const TextStyle(fontSize: 14),
-                            ),
-                            subtitle: Text(
-                              _protocolDescription(protocol),
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: muted(context),
-                                height: 1.7,
-                              ),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-              SectionLabel(
-                '费用估算',
-                caption: '可选 · 自定义 USD 单价',
-                action: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: () async {
-                    final rates = await glassSheet<List<double>>(
-                      context,
-                      PricingSheet(config: config),
-                    );
-                    if (rates != null && mounted) {
-                      setState(() {
-                        config.inputPrice = rates[0];
-                        config.outputPrice = rates[1];
-                        config.imagePrice = rates[2];
-                      });
-                    }
-                  },
-                  child: Text(
-                    '设置单价',
-                    style: TextStyle(fontSize: 12, color: accentInk(context)),
-                  ),
-                ),
-              ),
-              Glass(
-                child: Text(
-                  '输入 \$${config.inputPrice}/百万 Token\n输出 \$${config.outputPrice}/百万 Token\n图片 \$${config.imagePrice}/张',
-                  style: TextStyle(
-                    color: muted(context),
-                    fontSize: 14,
-                    height: 1.9,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 24),
-              GlassButton(
-                '保存并自动检测',
-                primary: true,
-                icon: Icons.check_rounded,
-                busy: saving,
-                onTap: save,
-              ),
-              const SizedBox(height: 12),
-              GlassButton(
-                '仅保存配置',
-                small: true,
-                onTap: saving ? null : () => save(detect: false),
-              ),
-              const SizedBox(height: 20),
-              Text(
-                '两组地址与 Key 独立存储。配置只发往你填写的接口，图片下载不会附带 Key。',
-                style: TextStyle(
-                  fontSize: 12,
-                  height: 1.8,
-                  color: muted(context),
-                ),
-              ),
-            ],
-          ),
+    return SettingsDetail(
+      title: '模型连接',
+      children: [
+        GlassSegments(
+          labels: const ['生图模型', '对话模型', '识图模型'],
+          selected: tab,
+          onChanged: (v) => setState(() => tab = v),
         ),
-      ),
+        if (tab == 2)
+          VisionSettings(store: widget.store, api: widget.api, embedded: true)
+        else ...[
+          const SectionLabel('API 基础地址'),
+          GlassField(
+            controller: isImage ? imageUrl : chatUrl,
+            hint: 'https://your-provider.com/v1',
+            keyboard: TextInputType.url,
+          ),
+          const SectionLabel('API Key'),
+          GlassField(
+            controller: isImage ? imageKey : chatKey,
+            hint: '填入这组模型的独立 Key',
+            obscure: !(isImage ? imageVisible : chatVisible),
+            suffix: IconButton(
+              icon: Icon(
+                (isImage ? imageVisible : chatVisible)
+                    ? Icons.visibility_off_outlined
+                    : Icons.visibility_outlined,
+                size: 20,
+              ),
+              onPressed: () => setState(() {
+                if (isImage) {
+                  imageVisible = !imageVisible;
+                } else {
+                  chatVisible = !chatVisible;
+                }
+              }),
+            ),
+          ),
+          SectionLabel(
+            '模型 ID',
+            action: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => choose(isImage),
+              child: Text(
+                '模型列表 (${config.models.length})',
+                style: TextStyle(fontSize: 12, color: accentInk(context)),
+              ),
+            ),
+          ),
+          GlassField(
+            controller: isImage ? imageModel : chatModel,
+            hint: '自动检测后选择，或手动填写精确 ID',
+          ),
+          const SizedBox(height: 14),
+          GlassButton(
+            '检测全部可用模型',
+            small: true,
+            icon: Icons.radar_rounded,
+            onTap: saving ? null : () => discover(isImage),
+          ),
+          if ((isImage ? imageStatus : chatStatus) != null) ...[
+            const SizedBox(height: 12),
+            StudioSelectable(
+              (isImage ? imageStatus : chatStatus)!,
+              style: TextStyle(
+                fontSize: 12,
+                color: muted(context),
+                height: 1.8,
+              ),
+            ),
+          ],
+          const SizedBox(height: 12),
+          Text(
+            '读取 GET /models，完整列出服务端返回的模型。模型名称仅用于初选，列表通常不提供能力信息，请按服务商文档选择生图或对话模型。',
+            style: TextStyle(fontSize: 12, height: 1.8, color: muted(context)),
+          ),
+          if (isImage) ...[
+            const SectionLabel('图片协议'),
+            Glass(
+              child: RadioGroup<ApiProtocol>(
+                groupValue: image.protocol,
+                onChanged: (v) {
+                  setState(() => image.protocol = v!);
+                  scheduleSave();
+                },
+                child: Column(
+                  children: [
+                    for (final protocol in ApiProtocol.values)
+                      RadioListTile<ApiProtocol>(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        value: protocol,
+                        title: Text(
+                          _protocolTitle(protocol),
+                          style: const TextStyle(fontSize: 14),
+                        ),
+                        subtitle: Text(
+                          _protocolDescription(protocol),
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: muted(context),
+                            height: 1.7,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+          SectionLabel(
+            '费用估算',
+            caption: '可选 · 自定义 USD 单价',
+            action: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () async {
+                final rates = await glassSheet<List<double>>(
+                  context,
+                  PricingSheet(config: config),
+                );
+                if (rates != null && mounted) {
+                  setState(() {
+                    config.inputPrice = rates[0];
+                    config.outputPrice = rates[1];
+                    config.imagePrice = rates[2];
+                  });
+                  scheduleSave();
+                }
+              },
+              child: Text(
+                '设置单价',
+                style: TextStyle(fontSize: 12, color: accentInk(context)),
+              ),
+            ),
+          ),
+          Glass(
+            child: Text(
+              '输入 \$${config.inputPrice}/百万 Token\n输出 \$${config.outputPrice}/百万 Token\n图片 \$${config.imagePrice}/张',
+              style: TextStyle(
+                color: muted(context),
+                fontSize: 14,
+                height: 1.9,
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
+          GlassButton(
+            '保存并自动检测',
+            primary: true,
+            icon: Icons.check_rounded,
+            busy: saving,
+            onTap: save,
+          ),
+          const SizedBox(height: 12),
+          GlassButton(
+            '仅保存配置',
+            small: true,
+            onTap: saving ? null : () => save(detect: false),
+          ),
+          const SizedBox(height: 20),
+          Text(
+            '两组地址与 Key 独立存储。配置只发往你填写的接口，图片下载不会附带 Key。',
+            style: TextStyle(fontSize: 12, height: 1.8, color: muted(context)),
+          ),
+        ],
+      ],
     );
   }
 }

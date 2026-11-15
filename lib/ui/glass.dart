@@ -23,8 +23,20 @@ Color muted(BuildContext context) =>
     mx.MiuixTheme.of(context).colors.onSurfaceVariantSummary;
 Color accent(BuildContext context) => mx.MiuixTheme.of(context).colors.primary;
 Color accentInk(BuildContext context) => accent(context);
-Color primaryOn(BuildContext context) =>
-    mx.MiuixTheme.of(context).colors.onPrimary;
+// Glass is translucent: onPrimary is only suitable for an opaque primary fill.
+Color primaryOn(BuildContext context, {double? opacity}) {
+  final surface = Color.alphaBlend(
+    accent(context)
+        .withValues(alpha: opacity ?? StudioScope.of(context).glassOpacity),
+    mx.MiuixTheme.of(context).colors.surface,
+  );
+  const light = Colors.white, dark = Color(0xff15202c);
+  final luminance = surface.computeLuminance();
+  final lightContrast = (light.computeLuminance() + .05) / (luminance + .05);
+  final darkContrast = (luminance + .05) / (dark.computeLuminance() + .05);
+  if (lightContrast < 4.5 && darkContrast < 4.5) return Colors.black;
+  return lightContrast > darkContrast ? light : dark;
+}
 
 lgr.LiquidGlassSettings glassSettings(BuildContext context) {
   final store = StudioScope.of(context);
@@ -144,14 +156,23 @@ class Glass extends StatelessWidget {
     final shape = lgr.LiquidRoundedSuperellipse(borderRadius: radius);
     const shadows = <BoxShadow>[];
     if (separateLayer || nested) {
-      return lgr.LiquidGlassCapture(
-        child: lgr.LiquidGlass.withOwnLayer(
-          shape: shape,
-          settings: settings,
-          appearance: appearance,
-          shadows: shadows,
-          child: content,
-        ),
+      return Stack(
+        fit: StackFit.passthrough,
+        children: [
+          Positioned.fill(
+            child: IgnorePointer(
+              child: lgr.LiquidGlass.withOwnLayer(
+                shape: shape,
+                settings: settings,
+                useBackdropGroup: true,
+                appearance: appearance,
+                shadows: shadows,
+                child: const SizedBox.expand(),
+              ),
+            ),
+          ),
+          content,
+        ],
       );
     }
     return lgr.LiquidGlass.auto(
@@ -188,46 +209,64 @@ class GlassButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = mx.MiuixTheme.of(context).colors;
-    final button = mx.MiuixButton(
+    final store = StudioScope.of(context);
+    final popup = ModalRoute.of(context) is PopupRoute;
+    final foreground = primary
+        ? primaryOn(
+            context,
+            opacity: popup
+                ? .25
+                : store.highContrast
+                ? .96
+                : null,
+          )
+        : c.onSurface;
+    final button = Semantics(
+      button: true,
       enabled: onTap != null && !busy,
-      onPressed: busy ? null : onTap,
-      minHeight: small ? 40 : 48,
-      minWidth: 40,
-      cornerRadius: 16,
-      insideMargin: EdgeInsets.symmetric(
-        horizontal: small ? 14 : 20,
-        vertical: small ? 8 : 12,
-      ),
-      colors: primary
-          ? mx.MiuixButtonDefaults.buttonColorsPrimary(context)
-          : null,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          if (busy)
-            SizedBox(
-              width: 18,
-              height: 18,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: primary ? c.onPrimary : c.onSurface,
-              ),
-            )
-          else if (icon != null)
-            Icon(icon, size: 20, color: primary ? c.onPrimary : c.onSurface),
-          if (busy || icon != null) const SizedBox(width: 8),
-          Flexible(
-            child: Text(
-              label,
-              style: TextStyle(
-                fontSize: 14,
-                color: primary ? c.onPrimary : c.onSurface,
-                fontWeight: FontWeight.w600,
-              ),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: busy ? null : onTap,
+        child: Opacity(
+          opacity: onTap == null || busy ? .68 : 1,
+          child: Glass(
+            separateLayer: ModalRoute.of(context) is! PopupRoute,
+            radius: 16,
+            tint: primary ? accent(context) : null,
+            padding: EdgeInsets.symmetric(
+              horizontal: small ? 14 : 20,
+              vertical: small ? 8 : 12,
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                if (busy)
+                  SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: foreground,
+                    ),
+                  )
+                else if (icon != null)
+                  Icon(icon, size: 20, color: foreground),
+                if (busy || icon != null) const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: foreground,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
-        ],
+        ),
       ),
     );
     return small
@@ -252,29 +291,20 @@ class GlassIcon extends StatelessWidget {
     child: Semantics(
       label: tooltip,
       button: true,
-      child: icon == Icons.arrow_back_rounded || icon == Icons.close_rounded
-          ? GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: onTap,
-              child: Glass(
-                radius: 16,
-                separateLayer: true,
-                refraction: 1.5,
-                padding: EdgeInsets.zero,
-                child: SizedBox.square(
-                  dimension: 44,
-                  child: Icon(icon, size: 22, color: ink(context)),
-                ),
-              ),
-            )
-          : mx.MiuixButton(
-              onPressed: onTap,
-              minWidth: 44,
-              minHeight: 44,
-              insideMargin: const EdgeInsets.all(10),
-              cornerRadius: 16,
-              child: Icon(icon, size: 22, color: ink(context)),
-            ),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: Glass(
+          radius: 16,
+          separateLayer: ModalRoute.of(context) is! PopupRoute,
+          refraction: 1.5,
+          padding: EdgeInsets.zero,
+          child: SizedBox.square(
+            dimension: 44,
+            child: Icon(icon, size: 22, color: ink(context)),
+          ),
+        ),
+      ),
     ),
   );
 }
@@ -349,7 +379,7 @@ class GlassSlider extends StatelessWidget {
   final double value, min, max;
   final ValueChanged<double> onChanged;
   final ValueChanged<double>? onChangeStart, onChangeEnd;
-  final String? label, left, right, semanticLabel;
+  final String? label, left, right, semanticLabel, valueLabel;
   final Color? leftColor, rightColor;
   const GlassSlider({
     super.key,
@@ -361,6 +391,7 @@ class GlassSlider extends StatelessWidget {
     this.left,
     this.right,
     this.semanticLabel,
+    this.valueLabel,
     this.leftColor,
     this.rightColor,
     this.onChangeStart,
@@ -377,7 +408,7 @@ class GlassSlider extends StatelessWidget {
             Expanded(child: Text(label!, style: const TextStyle(fontSize: 14))),
             const SizedBox(width: 16),
             Text(
-              '${(value * 100).round()}',
+              valueLabel ?? '${(value * 100).round()}',
               style: TextStyle(
                 fontSize: 12,
                 color: muted(context),
@@ -497,9 +528,10 @@ class GlassToggle extends StatelessWidget {
       mx.MiuixSwitch(value: value, onChanged: onChanged);
 }
 
-class TaskStatusCard extends StatelessWidget {
+class TaskStatusCard extends StatefulWidget {
   final String title, stage;
   final int seconds;
+  final double? progress;
   final VoidCallback? onCancel;
   const TaskStatusCard({
     super.key,
@@ -507,61 +539,107 @@ class TaskStatusCard extends StatelessWidget {
     required this.stage,
     required this.seconds,
     this.onCancel,
+    this.progress,
   });
   @override
-  Widget build(BuildContext context) => Glass(
+  State<TaskStatusCard> createState() => _TaskStatusCardState();
+}
+
+class _TaskStatusCardState extends State<TaskStatusCard>
+    with SingleTickerProviderStateMixin {
+  late final controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1600),
+  );
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (MediaQuery.disableAnimationsOf(context)) {
+      controller.stop();
+      controller.value = 1;
+    } else if (!controller.isAnimating) {
+      controller.repeat(reverse: true);
+    }
+  }
+
+  @override
+  void dispose() {
+    controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(22),
+    decoration: BoxDecoration(
+      borderRadius: BorderRadius.circular(30),
+      gradient: const LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [Color(0xffdbade1), Color(0xffb8b3ed), Color(0xff9dbce9)],
+      ),
+    ),
     child: Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
       children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox(
-              width: 22,
-              height: 22,
-              child: CircularProgressIndicator(
-                strokeWidth: 2.5,
-                color: accent(context),
-              ),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
+        SizedBox(
+          height: 92,
+          child: Center(
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                const Icon(Icons.image_outlined, color: Colors.white, size: 64),
+                Positioned(
+                  right: -22,
+                  top: -12,
+                  child: AnimatedBuilder(
+                    animation: controller,
+                    builder: (_, child) => Opacity(
+                      opacity: StudioScope.of(context).reduceMotion
+                          ? 1
+                          : .35 + controller.value * .65,
+                      child: child,
+                    ),
+                    child: const Icon(
+                      Icons.auto_awesome_rounded,
+                      size: 30,
+                      color: Colors.white,
                     ),
                   ),
-                  const SizedBox(height: 8),
-                  Text(
-                    stage,
-                    style: TextStyle(
-                      fontSize: 14,
-                      height: 1.5,
-                      color: muted(context),
-                    ),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
-        const SizedBox(height: 20),
-        Row(
-          children: [
-            Text(
-              '已用时 $seconds 秒',
-              style: TextStyle(fontSize: 12, color: muted(context)),
-            ),
-            const Spacer(),
-            if (onCancel != null)
-              GlassButton('取消任务', small: true, onTap: onCancel),
-          ],
+        Text(
+          widget.title,
+          style: const TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w600,
+            color: Color(0xff25314f),
+          ),
         ),
+        const SizedBox(height: 10),
+        Text(
+          widget.progress == null
+              ? widget.stage
+              : '${(widget.progress!.clamp(0, 1) * 100).round()}% · ${widget.stage}',
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 14,
+            height: 1.5,
+            color: Color(0xff354264),
+          ),
+        ),
+        const SizedBox(height: 14),
+        Text(
+          '已用时 ${widget.seconds} 秒',
+          style: const TextStyle(fontSize: 12, color: Color(0xff354264)),
+        ),
+        if (widget.onCancel != null) ...[
+          const SizedBox(height: 16),
+          GlassButton('取消任务', small: true, onTap: widget.onCancel),
+        ],
       ],
     ),
   );
@@ -815,23 +893,25 @@ class StudioBackground extends StatelessWidget {
   final Widget child;
   const StudioBackground({super.key, required this.child});
   @override
-  Widget build(BuildContext context) => BackdropGroup(
-    child: ColoredBox(
-      color: mx.MiuixTheme.of(context).colors.surface,
-      child: Stack(
-        children: [
-          Positioned.fill(
-            child: RepaintBoundary(
-              child: CustomPaint(
-                painter: _BackgroundPainter(
-                  isDark(context),
-                  StudioScope.of(context).palette,
+  Widget build(BuildContext context) => lgr.LiquidGlassCapture(
+    child: BackdropGroup(
+      child: ColoredBox(
+        color: mx.MiuixTheme.of(context).colors.surface,
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: RepaintBoundary(
+                child: CustomPaint(
+                  painter: _BackgroundPainter(
+                    isDark(context),
+                    StudioScope.of(context).palette,
+                  ),
                 ),
               ),
             ),
-          ),
-          Material(type: MaterialType.transparency, child: child),
-        ],
+            Material(type: MaterialType.transparency, child: child),
+          ],
+        ),
       ),
     ),
   );
@@ -871,4 +951,11 @@ class _BackgroundPainter extends CustomPainter {
   @override
   bool shouldRepaint(_BackgroundPainter old) =>
       old.dark != dark || old.palette != palette;
+}
+
+double? stageProgress(String stage) {
+  final match = RegExp(r'(\d+(?:\.\d+)?)%').firstMatch(stage);
+  return match == null
+      ? null
+      : (double.parse(match.group(1)!) / 100).clamp(0, 1);
 }

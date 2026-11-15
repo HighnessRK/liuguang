@@ -1,8 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart' show compute;
 
 import 'image_transport.dart';
@@ -89,7 +89,7 @@ Map<String, dynamic> imagePayload(
   }
   if (config.protocol == ApiProtocol.gptImage) {
     result['quality'] = options.quality;
-    result['output_format'] = options.format == 'gif' ? 'png' : options.format;
+    result['output_format'] = options.format;
     if (['jpeg', 'webp'].contains(result['output_format'])) {
       result['output_compression'] = options.compression;
     }
@@ -99,6 +99,23 @@ Map<String, dynamic> imagePayload(
     if (config.model.contains('dall-e-3')) {
       result['quality'] = options.quality == 'high' ? 'hd' : 'standard';
     }
+  }
+  for (final entry in options.advanced.entries) {
+    if (!{'seed', 'steps', 'guidance_scale', 'sampler'}.contains(entry.key)) {
+      throw StudioException('不支持的专业参数：${entry.key}');
+    }
+    final value = entry.value;
+    final valid = switch (entry.key) {
+      'seed' => value is int && value >= 0 && value <= 2147483647,
+      'steps' => value is int && value >= 1 && value <= 150,
+      'guidance_scale' =>
+        value is num && value.isFinite && value >= 1 && value <= 20,
+      'sampler' =>
+        value is String && value.trim().isNotEmpty && value.length <= 120,
+      _ => false,
+    };
+    if (!valid) throw StudioException('专业参数 ${entry.key} 超出允许范围');
+    result[entry.key] = value;
   }
   return result;
 }
@@ -192,6 +209,16 @@ class StudioApi {
     }
     if (config.protocol == ApiProtocol.chatImage && mask != null) {
       throw StudioException('对话生图接口没有标准蒙版协议，请为局部修图选择 Images 协议');
+    }
+    if (options.format == 'gif' && !supportsNativeGif(config.model)) {
+      throw StudioException('当前模型暂不支持 GIF');
+    }
+    if (options.format == 'gif' && config.protocol != ApiProtocol.gptImage) {
+      throw StudioException('原生 GIF 请使用 GPT Image 图片协议');
+    }
+    if (config.protocol == ApiProtocol.chatImage &&
+        options.advanced.isNotEmpty) {
+      throw StudioException('对话生图协议不支持专业采样参数，请关闭接口扩展参数');
     }
     final watch = Stopwatch()..start();
     Map<String, dynamic>? usage;
@@ -337,7 +364,17 @@ class StudioApi {
               options: _auth(config),
               cancelToken: cancelToken,
             );
+            if (poll.data is! Map) throw StudioException('任务状态格式不正确');
             final task = poll.data as Map;
+            final rawProgress = task['progress'];
+            final progress = rawProgress is num
+                ? rawProgress.toDouble()
+                : double.tryParse('$rawProgress');
+            if (progress != null && progress >= 0 && progress <= 100) {
+              onStage?.call(
+                '模型处理中 ${(progress <= 1 ? progress * 100 : progress).round()}%',
+              );
+            }
             if (task['status'] == 'failed' || task['status'] == 'cancelled') {
               final error = task['error'];
               throw StudioException(
@@ -475,9 +512,87 @@ class StudioApi {
     return results;
   }
 
+  Future<String> describeImage(
+    String path, {
+    CancelToken? cancelToken,
+    String goal = 'depth',
+  }) async {
+    final config = store.visionApi.snapshot();
+    if (store.visionUsesChatKey) config.key = store.chatApi.key;
+    if (!config.ready) throw StudioException('请先配置识图模型地址、Key 与模型 ID');
+    final watch = Stopwatch()..start();
+    Map<String, dynamic>? usage;
+    String? failure;
+    try {
+      await beginProcessing();
+      final prepared = await compute(prepareImageInput, {
+        'bytes': await File(path).readAsBytes(),
+      });
+      final bytes = prepared['bytes'] as Uint8List;
+      final response = await dio.postUri(
+        apiUri(config.baseUrl, 'chat/completions'),
+        options: _auth(config),
+        cancelToken: cancelToken,
+        data: {
+          'model': config.model,
+          'messages': [
+            {
+              'role': 'user',
+              'content': [
+                {
+                  'type': 'text',
+                  'text': goal == 'gif'
+                      ? '依据图片生成一段适合原生 GIF 动画的中文提示词：明确可动主体、合理的小幅动作、起止姿态、动作节奏、固定镜头或必要镜头运动、平滑循环方式。保留主体身份、场景和构图，只安排画面中真实存在物体的自然运动，不凭空增加人物或物件。只输出可直接使用的动态提示词。'
+                      : '用中文简洁描述这张图片的主体、前景中景远景、光线、焦点、色彩与适合的自然景深。只依据可见内容，不猜测身份。',
+                },
+                {
+                  'type': 'image_url',
+                  'image_url': {
+                    'url':
+                        'data:${imageMime(bytes)};base64,${base64Encode(bytes)}',
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      );
+      dynamic data = response.data;
+      if (data is String) data = jsonDecode(data);
+      if (data is! Map ||
+          data['choices'] is! List ||
+          (data['choices'] as List).isEmpty) {
+        throw StudioException('识图模型未返回有效描述');
+      }
+      final choice = (data['choices'] as List).first;
+      if (choice is! Map) throw StudioException('识图模型返回格式不正确');
+      final message = choice['message'];
+      final result = message is Map ? chatText(message['content']) : '';
+      if (result.trim().isEmpty) throw StudioException('识图模型返回空描述');
+      usage = data['usage'] is Map
+          ? Map<String, dynamic>.from(data['usage'])
+          : null;
+      return result;
+    } catch (e) {
+      failure = describeError(e);
+      throw StudioException(failure);
+    } finally {
+      await endProcessing();
+      await _record(
+        config,
+        '识图分析',
+        watch.elapsedMilliseconds,
+        usage,
+        0,
+        failure,
+      );
+    }
+  }
+
   Future<String> chat(
     List<ChatMessage> messages, {
     bool polish = false,
+    void Function(String)? onText,
     CancelToken? cancelToken,
   }) async {
     final config = store.chatApi.snapshot();
@@ -488,13 +603,14 @@ class StudioApi {
     Map<String, dynamic>? usage;
     String? failure;
     try {
+      await beginProcessing();
       final response = await dio.postUri(
         apiUri(config.baseUrl, 'chat/completions'),
-        options: _auth(config),
+        options: _auth(config)..responseType = ResponseType.stream,
         cancelToken: cancelToken,
         data: {
           'model': config.model,
-          'stream': false,
+          'stream': true,
           'messages': [
             {
               'role': 'system',
@@ -506,16 +622,49 @@ class StudioApi {
           ],
         },
       );
-      final data = response.data;
-      if (data['usage'] is Map) {
-        usage = Map<String, dynamic>.from(data['usage']);
+      final body = response.data as ResponseBody;
+      final buffer = StringBuffer();
+      final raw = StringBuffer();
+      await for (final line
+          in body.stream
+              .cast<List<int>>()
+              .transform(utf8.decoder)
+              .transform(const LineSplitter())) {
+        if (!line.startsWith('data:')) {
+          raw.writeln(line);
+          continue;
+        }
+        final payload = line.substring(5).trim();
+        if (payload.isEmpty || payload == '[DONE]') continue;
+        final event = jsonDecode(payload);
+        if (event is! Map) continue;
+        if (event['error'] != null) throw StudioException('对话接口返回错误');
+        if (event['usage'] is Map) {
+          usage = Map<String, dynamic>.from(event['usage']);
+        }
+        final choices = event['choices'];
+        if (choices is List && choices.isNotEmpty && choices.first is Map) {
+          final choice = choices.first as Map;
+          final message = choice['delta'] ?? choice['message'];
+          final part = message is Map ? chatText(message['content']) : '';
+          buffer.write(part);
+          onText?.call(buffer.toString());
+        }
       }
-      final content = data['choices']?[0]?['message']?['content'];
-      final text = content is String
-          ? content
-          : content is List
-          ? content.whereType<Map>().map((v) => v['text'] ?? '').join('\n')
-          : '';
+      if (buffer.isEmpty && raw.toString().trim().isNotEmpty) {
+        dynamic data = jsonDecode(raw.toString());
+        if (data is String) data = jsonDecode(data);
+        if (data is! Map) throw StudioException('对话返回格式不正确');
+        if (data['usage'] is Map) {
+          usage = Map<String, dynamic>.from(data['usage']);
+        }
+        final choices = data['choices'];
+        if (choices is List && choices.isNotEmpty && choices.first is Map) {
+          final message = choices.first['message'];
+          buffer.write(message is Map ? chatText(message['content']) : '');
+        }
+      }
+      final text = buffer.toString();
       if (text.trim().isEmpty) {
         throw StudioException('对话模型未返回文本');
       }
@@ -524,6 +673,7 @@ class StudioApi {
       failure = describeError(e);
       throw StudioException(failure);
     } finally {
+      await endProcessing();
       watch.stop();
       await _record(
         config,
@@ -630,4 +780,56 @@ String describeError(Object e) {
     return '无法连接 API，请检查网络和基础地址';
   }
   return e is FormatException ? '接口返回的数据格式不正确' : '处理失败：$e';
+}
+
+String chatText(dynamic content) {
+  if (content is String) return content;
+  if (content is List) {
+    return content.whereType<Map>().map((v) => chatText(v['text'])).join();
+  }
+  if (content is Map) return chatText(content['text']);
+  return '';
+}
+
+int _cloudTasks = 0, _localTasks = 0;
+Future<void> beginProcessing({bool local = false}) async {
+  if (!Platform.isAndroid) return;
+  if (local) {
+    _localTasks++;
+  } else {
+    _cloudTasks++;
+  }
+  try {
+    await const MethodChannel('liuguang/native').invokeMethod(
+      'beginProcessing',
+      {'cloud': _cloudTasks > 0, 'local': _localTasks > 0},
+    );
+  } catch (_) {
+    // Each caller releases its own registration from finally, including a failed start.
+    throw StudioException('无法启动后台处理，请返回应用前台后重试');
+  }
+}
+
+Future<void> endProcessing({bool local = false}) async {
+  if (!Platform.isAndroid) return;
+  if (local) {
+    if (_localTasks <= 0) return;
+    _localTasks--;
+  } else {
+    if (_cloudTasks <= 0) return;
+    _cloudTasks--;
+  }
+  try {
+    if (_cloudTasks + _localTasks == 0) {
+      await const MethodChannel('liuguang/native')
+          .invokeMethod('endProcessing');
+    } else {
+      await const MethodChannel('liuguang/native').invokeMethod(
+        'beginProcessing',
+        {'cloud': _cloudTasks > 0, 'local': _localTasks > 0},
+      );
+    }
+  } on PlatformException {
+    /* Cleanup must not hide the original task outcome. */
+  }
 }

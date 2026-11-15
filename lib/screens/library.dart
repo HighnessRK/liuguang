@@ -12,10 +12,12 @@ import '../core/models.dart';
 import '../core/store.dart';
 import '../ui/glass.dart';
 import 'editor.dart';
+import 'share_card.dart';
 
 class LibraryScreen extends StatefulWidget {
   final AppStore store;
   final bool active;
+  final VoidCallback? onGif;
   final ValueChanged<String> onEdit, onReuse;
   const LibraryScreen({
     super.key,
@@ -23,17 +25,46 @@ class LibraryScreen extends StatefulWidget {
     required this.onEdit,
     required this.onReuse,
     this.active = true,
+    this.onGif,
   });
   @override
   State<LibraryScreen> createState() => _LibraryScreenState();
 }
 
-class _LibraryScreenState extends State<LibraryScreen> {
+class _LibraryScreenState extends State<LibraryScreen>
+    with SingleTickerProviderStateMixin {
+  final selected = <String>{};
   int filter = 0;
   String query = '';
   final search = TextEditingController();
+  late final selectionAnimation = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 260),
+    reverseDuration: const Duration(milliseconds: 180),
+  );
+  late final selectionCurve = CurvedAnimation(
+    parent: selectionAnimation,
+    curve: Curves.easeOutCubic,
+    reverseCurve: Curves.easeOutCubic,
+  );
+
+  void updateSelection(VoidCallback change, {bool longPress = false}) {
+    if (longPress && widget.store.haptics) HapticFeedback.mediumImpact();
+    setState(change);
+    final target = selected.isEmpty ? 0.0 : 1.0;
+    if (MediaQuery.disableAnimationsOf(context)) {
+      selectionAnimation.value = target;
+    } else if (selected.isEmpty) {
+      selectionAnimation.reverse();
+    } else {
+      selectionAnimation.forward();
+    }
+  }
+
   @override
   void dispose() {
+    selectionCurve.dispose();
+    selectionAnimation.dispose();
     search.dispose();
     super.dispose();
   }
@@ -61,13 +92,14 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   title: '作品',
                   action: GlassIcon(
                     Icons.gif_box_outlined,
-                    tooltip: '制作 GIF',
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => GifComposer(store: widget.store),
-                      ),
-                    ),
+                    tooltip: '原生 GIF 创作',
+                    onTap: () {
+                      if (!supportsNativeGif(widget.store.imageApi.model)) {
+                        toast(context, '当前模型暂不支持 GIF');
+                        return;
+                      }
+                      widget.onGif?.call();
+                    },
                   ),
                 ),
                 GlassField(
@@ -82,7 +114,84 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   selected: filter,
                   onChanged: (i) => setState(() => filter = i),
                 ),
-                SectionLabel('${items.length} 件作品'),
+                SectionLabel(
+                  selected.isEmpty
+                      ? '${items.length} 件作品'
+                      : '已选 ${selected.length} 件',
+                ),
+                AnimatedBuilder(
+                  animation: selectionAnimation,
+                  builder: (_, child) => Offstage(
+                    offstage: selectionAnimation.isDismissed,
+                    child: IgnorePointer(
+                      ignoring: selected.isEmpty,
+                      child: child,
+                    ),
+                  ),
+                  child: SizeTransition(
+                    key: const ValueKey('artwork-selection-toolbar'),
+                    sizeFactor: selectionCurve,
+                    alignment: Alignment.topCenter,
+                    child: FadeTransition(
+                      opacity: selectionCurve,
+                      child: Padding(
+                        padding: const EdgeInsets.only(bottom: 20),
+                        child: Wrap(
+                          spacing: 8,
+                          runSpacing: 10,
+                          children: [
+                            GlassButton(
+                              '分享图',
+                              small: true,
+                              onTap: () => shareArtworkCards(
+                                context,
+                                widget.store,
+                                widget.store.artworks
+                                    .where((a) => selected.contains(a.id))
+                                    .toList(),
+                              ),
+                            ),
+                            GlassButton(
+                              '全选',
+                              small: true,
+                              onTap: () => updateSelection(
+                                () => selected.addAll(items.map((a) => a.id)),
+                              ),
+                            ),
+                            GlassButton(
+                              '取消',
+                              small: true,
+                              onTap: () =>
+                                  updateSelection(() => selected.clear()),
+                            ),
+                            GlassButton(
+                              '删除所选',
+                              small: true,
+                              onTap: () async {
+                                if (!await confirm(
+                                  context,
+                                  '删除 ${selected.length} 件作品？',
+                                  '仅删除应用内副本，相册照片保留。',
+                                )) {
+                                  return;
+                                }
+                                for (final art
+                                    in widget.store.artworks
+                                        .where((a) => selected.contains(a.id))
+                                        .toList()) {
+                                  await widget.store.removeArtwork(art);
+                                }
+                                if (mounted) {
+                                  updateSelection(() => selected.clear());
+                                }
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
@@ -130,20 +239,25 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 final art = items[i];
                 return GestureDetector(
                   behavior: HitTestBehavior.opaque,
-                  onLongPress: () async {
-                    if (await confirm(context, '删除作品？', '仅删除应用内副本，相册照片保留。') &&
-                        mounted) {
-                      await widget.store.removeArtwork(art);
-                      if (mounted) setState(() {});
-                    }
-                  },
-                  onTap: () => openArtwork(
-                    context,
-                    widget.store,
-                    art,
-                    widget.onEdit,
-                    onReuse: widget.onReuse,
+                  onLongPress: () => updateSelection(
+                    () => selected.add(art.id),
+                    longPress: true,
                   ),
+                  onTap: () {
+                    if (selected.isNotEmpty) {
+                      updateSelection(() {
+                        if (!selected.add(art.id)) selected.remove(art.id);
+                      });
+                      return;
+                    }
+                    openArtwork(
+                      context,
+                      widget.store,
+                      art,
+                      widget.onEdit,
+                      onReuse: widget.onReuse,
+                    );
+                  },
                   child: Glass(
                     padding: EdgeInsets.zero,
                     radius: 22,
@@ -163,6 +277,42 @@ class _LibraryScreenState extends State<LibraryScreen> {
                                   child: Icon(Icons.broken_image_outlined),
                                 ),
                               ),
+                              if (selected.contains(art.id))
+                                Positioned(
+                                  left: 10,
+                                  top: 10,
+                                  child: Semantics(
+                                    label: '已选中',
+                                    selected: true,
+                                    child: Container(
+                                      key: const ValueKey(
+                                        'artwork-selected-check',
+                                      ),
+                                      width: 30,
+                                      height: 30,
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xff16884b),
+                                        shape: BoxShape.circle,
+                                        border: Border.all(
+                                          color: Colors.white,
+                                          width: 2,
+                                        ),
+                                        boxShadow: const [
+                                          BoxShadow(
+                                            color: Color(0x55000000),
+                                            blurRadius: 6,
+                                            offset: Offset(0, 2),
+                                          ),
+                                        ],
+                                      ),
+                                      child: const Icon(
+                                        Icons.check_rounded,
+                                        color: Colors.white,
+                                        size: 22,
+                                      ),
+                                    ),
+                                  ),
+                                ),
                               Positioned(
                                 top: 9,
                                 right: 9,
@@ -371,6 +521,16 @@ class _ArtworkDetailState extends State<ArtworkDetail> {
               ),
               const SizedBox(height: 12),
               GlassButton(
+                '生成分享图',
+                icon: Icons.auto_awesome_rounded,
+                onTap: busy
+                    ? null
+                    : () => action(
+                        () => shareArtworkCard(context, widget.store, art),
+                      ),
+              ),
+              const SizedBox(height: 12),
+              GlassButton(
                 busy ? '处理中…' : '保存到系统相册',
                 icon: Icons.download_rounded,
                 busy: busy,
@@ -516,6 +676,23 @@ class _GifComposerState extends State<GifComposer> {
   List<String> frames = [];
   int duration = 500, colors = 256;
   bool busy = false;
+  @override
+  void initState() {
+    super.initState();
+    duration = (widget.store.prefs.getInt('gif_duration') ?? 500).clamp(
+      100,
+      2000,
+    );
+    colors = widget.store.prefs.getInt('gif_colors') == 128 ? 128 : 256;
+  }
+
+  @override
+  void setState(VoidCallback fn) {
+    super.setState(fn);
+    widget.store.prefs.setInt('gif_duration', duration);
+    widget.store.prefs.setInt('gif_colors', colors);
+  }
+
   Future<void> pick() async {
     try {
       final files = await ImagePicker().pickMultiImage(limit: 12);
@@ -540,6 +717,7 @@ class _GifComposerState extends State<GifComposer> {
     }
     setState(() => busy = true);
     try {
+      await beginProcessing(local: true);
       final data = <Uint8List>[];
       for (final path in frames) {
         data.add(await File(path).readAsBytes());
@@ -566,6 +744,7 @@ class _GifComposerState extends State<GifComposer> {
         toast(context, describeError(e));
       }
     } finally {
+      await endProcessing(local: true);
       if (mounted) {
         setState(() => busy = false);
       }

@@ -46,12 +46,15 @@ class _Stroke {
   _Stroke(this.points, this.width, this.erase);
 }
 
-class _EditorScreenState extends State<EditorScreen> {
-  String? path;
+class _EditorScreenState extends State<EditorScreen>
+    with WidgetsBindingObserver {
+  String? path, comparisonPath;
+  bool memoryReleased = false;
+  Timer? preferenceSave;
   String? savedState;
   bool closing = false, dismissed = false;
   String get imageState => jsonEncode([path, a.toJson()]);
-  ui.Image? image;
+  ui.Image? image, comparisonImage;
   ui.FragmentShader? shader;
   Adjustments a = Adjustments();
   final List<_Snapshot> undo = [], redo = [];
@@ -63,6 +66,8 @@ class _EditorScreenState extends State<EditorScreen> {
       feather = true;
   String activity = '';
   bool manualLens = false;
+  bool analyzeLens = true;
+  double lensDepth = .5;
   int taskSeconds = 0;
   Timer? taskTicker;
   void beginTask(String stage) {
@@ -97,7 +102,149 @@ class _EditorScreenState extends State<EditorScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    widget.store.memoryCheckpoint = checkpoint;
+    final raw = widget.store.prefs.getString('editor_preferences');
+    if (raw != null) {
+      try {
+        final v = jsonDecode(raw) as Map;
+        cloudEdge = [1024, 2048, 4096].contains(v['edge']) ? v['edge'] : 4096;
+        tool = (v['tool'] as int? ?? 0).clamp(0, 5);
+        adjustment = (v['adjustment'] as int? ?? 0).clamp(0, 13);
+        balanceRange = (v['balanceRange'] as int? ?? 1).clamp(0, 2);
+        eraser = v['eraser'] ?? false;
+        lensStyle = (v['lensStyle'] as int? ?? 0).clamp(0, 2);
+        lensStrength = (v['lensStrength'] as num? ?? .72).toDouble().clamp(
+          0,
+          1,
+        );
+        lensDepth = (v['lensDepth'] as num? ?? .5).toDouble().clamp(0, 1);
+        analyzeLens = v['analyzeLens'] ?? true;
+        portraitStyle = (v['portraitStyle'] as int? ?? 0).clamp(0, 4);
+        portraitAI = v['portraitAI'] ?? false;
+        portraitStrength = (v['portraitStrength'] as num? ?? .55)
+            .toDouble()
+            .clamp(0, 1);
+        brush = (v['brush'] as num? ?? .075).toDouble().clamp(.01, .25);
+        feather = v['feather'] ?? true;
+        manualLens = v['manualLens'] ?? false;
+        focusX = (v['focusX'] as num? ?? .5).toDouble().clamp(0, 1);
+        focusY = (v['focusY'] as num? ?? .45).toDouble().clamp(0, 1);
+        focusRadius = (v['focusRadius'] as num? ?? .34).toDouble().clamp(
+          .08,
+          .65,
+        );
+        bokehStrength = (v['bokehStrength'] as num? ?? .5).toDouble().clamp(
+          .05,
+          1,
+        );
+      } catch (_) {
+        /* Keep valid defaults for older settings. */
+      }
+    }
+    editPrompt.text = widget.store.prefs.getString('edit_prompt') ?? '';
+    editPrompt.addListener(
+      () => widget.store.prefs.setString('edit_prompt', editPrompt.text),
+    );
     initialize();
+  }
+
+  @override
+  void setState(VoidCallback fn) {
+    super.setState(fn);
+    preferenceSave?.cancel();
+    preferenceSave = Timer(const Duration(milliseconds: 350), savePreferences);
+  }
+
+  void savePreferences() {
+    if (dismissed) return;
+    widget.store.prefs.setString(
+      'editor_preferences',
+      jsonEncode({
+        'edge': cloudEdge,
+        'tool': tool,
+        'adjustment': adjustment,
+        'balanceRange': balanceRange,
+        'eraser': eraser,
+        'lensStyle': lensStyle,
+        'lensStrength': lensStrength,
+        'lensDepth': lensDepth,
+        'analyzeLens': analyzeLens,
+        'portraitStyle': portraitStyle,
+        'portraitAI': portraitAI,
+        'portraitStrength': portraitStrength,
+        'brush': brush,
+        'feather': feather,
+        'manualLens': manualLens,
+        'focusX': focusX,
+        'focusY': focusY,
+        'focusRadius': focusRadius,
+        'bokehStrength': bokehStrength,
+      }),
+    );
+    if (path != null) {
+      widget.store.prefs.setString(
+        'editor_checkpoint',
+        jsonEncode({
+          'path': path,
+          'comparisonPath': comparisonPath,
+          'adjustments': a.toJson(),
+          'crop': [crop.left, crop.top, crop.width, crop.height],
+          'cropRatio': cropRatio,
+          'strokes': [
+            for (final s in strokes)
+              {
+                'width': s.width,
+                'erase': s.erase,
+                'points': [
+                  for (final p in s.points) [p.dx, p.dy],
+                ],
+              },
+          ],
+        }),
+      );
+    }
+  }
+
+  Future<void> checkpoint(bool kill) async {
+    preferenceSave?.cancel();
+    savePreferences();
+    if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed &&
+        !busy &&
+        image != null) {
+      image?.dispose();
+      comparisonImage?.dispose();
+      image = null;
+      comparisonImage = null;
+      memoryReleased = true;
+    }
+    // SharedPreferences writes finish before acknowledging the factory checkpoint.
+    await widget.store.prefs.setBool('editor_recovery_ready', path != null);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) savePreferences();
+    if (state == AppLifecycleState.resumed && memoryReleased && path != null) {
+      memoryReleased = false;
+      load(path!, reset: false).then((_) => restoreComparison());
+    }
+  }
+
+  Future<void> restoreComparison() async {
+    final original = comparisonPath;
+    if (original == null || !File(original).existsSync()) return;
+    final codec = await ui.instantiateImageCodec(
+      await File(original).readAsBytes(),
+    );
+    final photo = (await codec.getNextFrame()).image;
+    codec.dispose();
+    if (!mounted) {
+      photo.dispose();
+      return;
+    }
+    comparisonImage?.dispose();
+    setState(() => comparisonImage = photo);
   }
 
   Future<void> initialize() async {
@@ -111,7 +258,44 @@ class _EditorScreenState extends State<EditorScreen> {
     }
     if (!mounted) return;
     if (widget.initialPath != null) {
+      final checkpoint = widget.store.prefs.getString('editor_checkpoint');
       await load(widget.initialPath!);
+      if (checkpoint != null && mounted) {
+        try {
+          final value = jsonDecode(checkpoint);
+          if (value['path'] == path) {
+            setState(() {
+              a = Adjustments.fromJson(value['adjustments']);
+              comparisonPath = value['comparisonPath'] as String? ?? path;
+              final rect = value['crop'];
+              if (rect is List && rect.length == 4) {
+                crop = Rect.fromLTWH(
+                  (rect[0] as num).toDouble(),
+                  (rect[1] as num).toDouble(),
+                  (rect[2] as num).toDouble(),
+                  (rect[3] as num).toDouble(),
+                );
+              }
+              cropRatio = value['cropRatio'] as int? ?? 0;
+              strokes = [
+                for (final stroke in value['strokes'] as List? ?? [])
+                  _Stroke(
+                    [
+                      for (final p in stroke['points'])
+                        Offset(
+                          (p[0] as num).toDouble(),
+                          (p[1] as num).toDouble(),
+                        ),
+                    ],
+                    (stroke['width'] as num).toDouble(),
+                    stroke['erase'] == true,
+                  ),
+              ];
+            });
+            await restoreComparison();
+          }
+        } catch (_) {}
+      }
     }
     if (Platform.isAndroid && widget.initialPath == null) {
       try {
@@ -143,6 +327,9 @@ class _EditorScreenState extends State<EditorScreen> {
         path = value;
         image = frame.image;
         if (reset) {
+          comparisonImage?.dispose();
+          comparisonImage = frame.image.clone();
+          comparisonPath = value;
           a = Adjustments();
           undo.clear();
           redo.clear();
@@ -182,6 +369,8 @@ class _EditorScreenState extends State<EditorScreen> {
         );
         if (!accepted || !mounted) return;
       }
+      if (!mounted) return;
+      await widget.store.prefs.remove('editor_checkpoint');
       if (!mounted) return;
       dismissed = true;
       ScaffoldMessenger.of(context).removeCurrentSnackBar();
@@ -239,9 +428,14 @@ class _EditorScreenState extends State<EditorScreen> {
 
   @override
   void dispose() {
+    preferenceSave?.cancel();
+    savePreferences();
+    widget.store.memoryCheckpoint = null;
+    WidgetsBinding.instance.removeObserver(this);
     token?.cancel();
     taskTicker?.cancel();
     image?.dispose();
+    comparisonImage?.dispose();
     shader?.dispose();
     editPrompt.dispose();
     super.dispose();
@@ -260,6 +454,7 @@ class _EditorScreenState extends State<EditorScreen> {
     }
     beginTask('正在导出原始分辨率…');
     try {
+      await beginProcessing(local: true);
       final result = await renderEdited(
         path!,
         a,
@@ -285,6 +480,7 @@ class _EditorScreenState extends State<EditorScreen> {
         toast(context, describeError(e));
       }
     } finally {
+      await endProcessing(local: true);
       if (mounted) {
         taskTicker?.cancel();
         setState(() => busy = false);
@@ -302,6 +498,7 @@ class _EditorScreenState extends State<EditorScreen> {
     }
     beginTask('正在处理构图…');
     try {
+      await beginProcessing(local: true);
       final result = await renderEdited(
         path!,
         a,
@@ -325,6 +522,7 @@ class _EditorScreenState extends State<EditorScreen> {
         toast(context, describeError(e));
       }
     } finally {
+      await endProcessing(local: true);
       if (mounted) {
         taskTicker?.cancel();
         setState(() => busy = false);
@@ -390,7 +588,11 @@ class _EditorScreenState extends State<EditorScreen> {
     return bytes;
   }
 
-  Future<void> cloudEdit({bool lens = false, bool portrait = false}) async {
+  Future<void> cloudEdit({
+    bool lens = false,
+    bool portrait = false,
+    bool redraw = false,
+  }) async {
     if (path == null || busy) {
       return;
     }
@@ -398,11 +600,11 @@ class _EditorScreenState extends State<EditorScreen> {
       widget.onSettings();
       return;
     }
-    if (!lens && !portrait && !strokes.any((s) => !s.erase)) {
+    if (!lens && !portrait && !redraw && !strokes.any((s) => !s.erase)) {
       toast(context, '先涂抹需要修改的区域');
       return;
     }
-    if (!lens && !portrait && editPrompt.text.trim().isEmpty) {
+    if (!lens && !portrait && !redraw && editPrompt.text.trim().isEmpty) {
       toast(context, '请描述选区需要怎样修改');
       return;
     }
@@ -418,12 +620,14 @@ class _EditorScreenState extends State<EditorScreen> {
     final toneStyle = lensStyle, toneStrength = lensStrength;
     beginTask(lens ? '正在准备增强副本' : '正在准备选区');
     token = CancelToken();
+    String? uploadCopy;
     try {
+      await beginProcessing();
       final normalized = await renderEdited(
         path!,
         a,
-        maxEdge: lens || portrait ? 2048 : null,
-        format: lens || portrait ? 'jpeg' : 'png',
+        maxEdge: lens || portrait || redraw ? 2048 : null,
+        format: lens || portrait || redraw ? 'jpeg' : 'png',
         quality: 92,
       );
       if (token!.isCancelled) throw token!.cancelError!;
@@ -431,12 +635,20 @@ class _EditorScreenState extends State<EditorScreen> {
         normalized['bytes'],
         imageExtension(normalized['bytes']),
       );
-      final mask = lens || portrait ? null : await maskBytes();
+      uploadCopy = source;
+      final mask = lens || portrait || redraw ? null : await maskBytes();
+      String scene = '';
+      if (lens && analyzeLens) {
+        if (mounted) setState(() => activity = '正在识别主体与空间层次');
+        scene = await widget.api.describeImage(source, cancelToken: token);
+      }
       if (!mounted || token?.isCancelled != false) return;
-      final instruction = portrait
+      final instruction = redraw
+          ? '高清重绘原图，保留主体身份、构图、色彩、文字和所有物体，只改善清晰度、细节与噪点，不添加或移除内容。'
+          : portrait
           ? '人像美化：${portraitNames[portraitStyle]}，强度 ${(portraitStrength * 100).round()}%。保持原图人物身份、年龄、肤色特征、五官比例、发丝、动作、服装、背景与构图。仅作自然皮肤质感、瑕疵淡化和光影优化，保留毛孔与真实肌理，避免塑料皮肤，不新增人物或改变身形。${["温和柔肤与淡化细小瑕疵", "均衡人脸曝光，通透提亮而不过曝", "温暖肤色与柔和人像补光", "自然改善气色，克制的红润肤色", "细腻黑白人像，保留丰富灰阶与立体光影"][portraitStyle]}。'
           : lens
-          ? '$lensPrompt\n影调方向：${lensToneNames[toneStyle]}，影调强度 ${(toneStrength * 100).round()}%，明暗层次鲜明、色彩分离自然，避免平淡灰雾。'
+          ? '$lensPrompt\n画面分析：$scene\n景深虚化强度 ${(lensDepth * 100).round()}%，0 为保留清晰背景，100 为强烈虚化；根据实际主体与前中远景安排焦外过渡。\n影调方向：${lensToneNames[toneStyle]}，影调强度 ${(toneStrength * 100).round()}%，明暗层次鲜明、色彩分离自然，避免平淡灰雾。'
           : '${editPrompt.text}\n\n仅修改蒙版透明区域。保持其余区域的主体、人物身份、构图与光照，不添加额外元素。';
       final response = await widget.api.generate(
         prompt: instruction,
@@ -451,10 +663,12 @@ class _EditorScreenState extends State<EditorScreen> {
         inputs: [source],
         mask: mask,
         cancelToken: token,
-        operation: portrait
+        operation: redraw
+            ? '高清重绘'
+            : portrait
             ? 'AI 人像美化'
             : lens
-            ? '云端景深增强'
+            ? '传奇二瞬'
             : '局部修图',
         onStage: (stage) {
           if (mounted && activity != stage) setState(() => activity = stage);
@@ -488,13 +702,20 @@ class _EditorScreenState extends State<EditorScreen> {
         result,
         prompt: instruction,
         model: model,
-        kind: portrait
+        kind: redraw
+            ? '高清重绘'
+            : portrait
             ? 'AI 人像美化'
             : lens
-            ? '景深增强'
+            ? '传奇二瞬'
             : '局部修图',
         modelWidth: modelWidth,
         modelHeight: modelHeight,
+        parameters: {
+          ...requestOptions.toJson(),
+          if (lens) 'depth': lensDepth,
+          if (lens) 'tone': toneStrength,
+        },
       );
       remember();
       await load(art.path, reset: false);
@@ -511,6 +732,13 @@ class _EditorScreenState extends State<EditorScreen> {
         toast(context, describeError(e));
       }
     } finally {
+      if (uploadCopy != null) {
+        try {
+          final file = File(uploadCopy);
+          if (await file.exists()) await file.delete();
+        } catch (_) {}
+      }
+      await endProcessing();
       token = null;
       if (mounted) {
         taskTicker?.cancel();
@@ -525,6 +753,7 @@ class _EditorScreenState extends State<EditorScreen> {
     }
     beginTask('正在柔化离焦区域…');
     try {
+      await beginProcessing(local: true);
       final normalized = await renderEdited(path!, a);
       final bytes = await compute(localBokeh, {
         'bytes': normalized['bytes'],
@@ -544,6 +773,7 @@ class _EditorScreenState extends State<EditorScreen> {
         toast(context, describeError(e));
       }
     } finally {
+      await endProcessing(local: true);
       if (mounted) {
         taskTicker?.cancel();
         setState(() => busy = false);
@@ -555,6 +785,7 @@ class _EditorScreenState extends State<EditorScreen> {
     if (path == null || busy) return;
     beginTask('正在本机精修人像…');
     try {
+      await beginProcessing(local: true);
       final original = await renderEdited(path!, a);
       final result = await compute(beautifyPortrait, {
         'bytes': original['bytes'],
@@ -568,6 +799,7 @@ class _EditorScreenState extends State<EditorScreen> {
     } catch (e) {
       if (mounted) toast(context, describeError(e));
     } finally {
+      await endProcessing(local: true);
       taskTicker?.cancel();
       if (mounted) setState(() => busy = false);
     }
@@ -670,6 +902,41 @@ class _EditorScreenState extends State<EditorScreen> {
           if (image != null) ...[
             const SizedBox(width: 8),
             GlassIcon(
+              Icons.fullscreen_rounded,
+              tooltip: '查看大图',
+              onTap: () => showDialog<void>(
+                context: context,
+                builder: (ctx) => Dialog.fullscreen(
+                  backgroundColor: Colors.black,
+                  child: Stack(
+                    children: [
+                      Positioned.fill(
+                        child: InteractiveViewer(
+                          minScale: .5,
+                          maxScale: 8,
+                          child: Center(
+                            child: RawImage(image: image, fit: BoxFit.contain),
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        top: 20,
+                        right: 20,
+                        child: IconButton(
+                          onPressed: () => Navigator.pop(ctx),
+                          icon: const Icon(
+                            Icons.close_rounded,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            GlassIcon(
               Icons.close_rounded,
               tooltip: '关闭图片',
               onTap: loading || (busy && token == null) ? null : closeImage,
@@ -729,7 +996,7 @@ class _EditorScreenState extends State<EditorScreen> {
             ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: photoPreview((bounds.maxHeight * .28).clamp(90.0, 248.0)),
+            child: photoPreview((bounds.maxHeight * .37).clamp(120.0, 340.0)),
           ),
           const SizedBox(height: 12),
           Padding(
@@ -819,7 +1086,7 @@ class _EditorScreenState extends State<EditorScreen> {
                                           ][i],
                                           size: 21,
                                           color: tool == i
-                                              ? primaryOn(context)
+                                              ? primaryOn(context, opacity: .65)
                                               : ink(context),
                                         ),
                                         const SizedBox(height: 6),
@@ -836,7 +1103,10 @@ class _EditorScreenState extends State<EditorScreen> {
                                           style: TextStyle(
                                             fontSize: 11,
                                             color: tool == i
-                                                ? primaryOn(context)
+                                                ? primaryOn(
+                                                    context,
+                                                    opacity: .65,
+                                                  )
                                                 : ink(context),
                                           ),
                                         ),
@@ -854,7 +1124,14 @@ class _EditorScreenState extends State<EditorScreen> {
               },
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 8),
+          GlassButton(
+            '高清重绘',
+            small: true,
+            icon: Icons.hd_outlined,
+            onTap: busy ? null : () => cloudEdit(redraw: true),
+          ),
+          const SizedBox(height: 8),
           Expanded(
             child: ClipRect(
               child: lgr.LiquidGlassLayer(
@@ -865,8 +1142,15 @@ class _EditorScreenState extends State<EditorScreen> {
                   children: [
                     if (busy)
                       TaskStatusCard(
-                        title: token != null ? 'AI 正在处理' : '正在处理照片',
+                        title: token == null
+                            ? '正在处理照片'
+                            : tool == 4
+                            ? '传奇二瞬ing'
+                            : tool == 5
+                            ? '人像美化ing'
+                            : 'AI 修图ing',
                         stage: activity,
+                        progress: stageProgress(activity),
                         seconds: taskSeconds,
                         onCancel: token == null || token!.isCancelled
                             ? null
@@ -993,7 +1277,7 @@ class _EditorScreenState extends State<EditorScreen> {
                         child: CustomPaint(
                           size: Size(w, h),
                           painter: _PhotoPainter(
-                            image!,
+                            compare ? (comparisonImage ?? image!) : image!,
                             compare ? Adjustments() : a,
                             shader,
                           ),
@@ -1110,7 +1394,7 @@ class _EditorScreenState extends State<EditorScreen> {
                             _adjustIcon(i),
                             size: 22,
                             color: i == adjustment
-                                ? primaryOn(context)
+                                ? primaryOn(context, opacity: .25)
                                 : muted(context),
                           ),
                         ),
@@ -1505,6 +1789,23 @@ class _EditorScreenState extends State<EditorScreen> {
             onChanged: (v) => setState(() => lensStrength = v),
           ),
           const SizedBox(height: 22),
+          GlassSlider(
+            label: '景深虚化程度',
+            value: lensDepth,
+            min: 0,
+            max: 1,
+            onChanged: (v) => setState(() => lensDepth = v),
+          ),
+          Row(
+            children: [
+              const Expanded(child: Text('识图定制景深')),
+              GlassToggle(
+                value: analyzeLens,
+                onChanged: (v) => setState(() => analyzeLens = v),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
           GlassButton(
             '开始增强',
             primary: true,
@@ -1687,7 +1988,27 @@ class ExportSheet extends StatefulWidget {
 
 class _ExportSheetState extends State<ExportSheet> {
   int format = 0, quality = 92;
-  bool gallery = true;
+  bool gallery = true, restored = false;
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (restored) return;
+    restored = true;
+    final prefs = StudioScope.of(context).prefs;
+    format = (prefs.getInt('export_format') ?? 0).clamp(0, 3);
+    quality = (prefs.getInt('export_quality') ?? 92).clamp(10, 100);
+    gallery = prefs.getBool('export_gallery') ?? true;
+  }
+
+  @override
+  void setState(VoidCallback fn) {
+    super.setState(fn);
+    final prefs = StudioScope.of(context).prefs;
+    prefs.setInt('export_format', format);
+    prefs.setInt('export_quality', quality);
+    prefs.setBool('export_gallery', gallery);
+  }
+
   @override
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,

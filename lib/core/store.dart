@@ -15,6 +15,8 @@ class AppStore extends ChangeNotifier {
   late SharedPreferences prefs;
   late Directory directory;
   EndpointConfig imageApi = EndpointConfig(), chatApi = EndpointConfig();
+  EndpointConfig visionApi = EndpointConfig();
+  bool visionUsesChatKey = true;
   GenerationOptions defaults = GenerationOptions(width: 4096, height: 4096);
   List<Artwork> artworks = [];
   List<UsageRecord> usage = [];
@@ -26,6 +28,7 @@ class AppStore extends ChangeNotifier {
   double glassOpacity = .22, blur = 12, textScale = 1;
   bool haptics = true, reduceMotion = false, highContrast = false;
   String? storageWarning;
+  Future<void> Function(bool kill)? memoryCheckpoint;
   Future<void> _saveQueue = Future.value();
   AppStore({FlutterSecureStorage? secure})
     : secure = secure ?? const FlutterSecureStorage();
@@ -42,6 +45,8 @@ class AppStore extends ChangeNotifier {
         final j = jsonDecode(raw) as Map<String, dynamic>;
         imageApi = EndpointConfig.fromJson(j['image'] ?? {});
         chatApi = EndpointConfig.fromJson(j['chat'] ?? {});
+        visionApi = EndpointConfig.fromJson(j['vision'] ?? {});
+        visionUsesChatKey = j['visionUsesChatKey'] ?? true;
         defaults = GenerationOptions.fromJson(
           j['defaults'] ?? defaults.toJson(),
         );
@@ -62,6 +67,7 @@ class AppStore extends ChangeNotifier {
     try {
       imageApi.key = await secure.read(key: 'image_api_key') ?? '';
       chatApi.key = await secure.read(key: 'chat_api_key') ?? '';
+      visionApi.key = await secure.read(key: 'vision_api_key') ?? '';
     } catch (_) {
       storageWarning = '无法读取加密 Key，请在连接设置中重新填写。';
     }
@@ -106,12 +112,15 @@ class AppStore extends ChangeNotifier {
     if (keys) {
       await secure.write(key: 'image_api_key', value: imageApi.key);
       await secure.write(key: 'chat_api_key', value: chatApi.key);
+      await secure.write(key: 'vision_api_key', value: visionApi.key);
     }
     await prefs.setString(
       'settings',
       jsonEncode({
         'image': imageApi.toJson(),
         'chat': chatApi.toJson(),
+        'vision': visionApi.toJson(),
+        'visionUsesChatKey': visionUsesChatKey,
         'defaults': defaults.toJson(),
         'theme': theme,
         'palette': palette,

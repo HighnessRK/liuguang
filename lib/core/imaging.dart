@@ -277,6 +277,7 @@ Future<Artwork> saveArtwork(
   int? modelHeight,
   String? format,
   int quality = 90,
+  Map<String, dynamic> parameters = const {},
 }) async {
   var extension = imageExtension(bytes);
   final result = await compute(imageDimensions, bytes);
@@ -311,6 +312,7 @@ Future<Artwork> saveArtwork(
     height: result['height']!,
     modelWidth: modelWidth,
     modelHeight: modelHeight,
+    parameters: parameters,
   );
   store.artworks.insert(0, art);
   await store.saveCatalog();

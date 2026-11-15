@@ -14,7 +14,16 @@ class UsageScreen extends StatefulWidget {
 }
 
 class _UsageScreenState extends State<UsageScreen> {
-  int period = 1;
+  late int period = (widget.store.prefs.getInt('usage_period') ?? 1).clamp(
+    0,
+    2,
+  );
+  @override
+  void setState(VoidCallback fn) {
+    super.setState(fn);
+    widget.store.prefs.setInt('usage_period', period);
+  }
+
   @override
   Widget build(BuildContext context) {
     final now = DateTime.now();
@@ -163,24 +172,29 @@ class _UsageScreenState extends State<UsageScreen> {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        for (final text in [
-                          '00:00',
-                          '06:00',
-                          '12:00',
-                          '18:00',
-                          '23:00',
-                        ])
-                          Text(
-                            text,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: muted(context),
-                            ),
-                          ),
-                      ],
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        final compact =
+                            constraints.maxWidth /
+                                MediaQuery.textScalerOf(context).scale(1) <
+                            340;
+                        final labels = compact
+                            ? ['00:00', '12:00', '23:00']
+                            : ['00:00', '06:00', '12:00', '18:00', '23:00'];
+                        return Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            for (final label in labels)
+                              Text(
+                                label,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: muted(context),
+                                ),
+                              ),
+                          ],
+                        );
+                      },
                     ),
                   ],
                 ),

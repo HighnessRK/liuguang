@@ -1,4 +1,7 @@
+import 'dart:ui' as ui;
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_localizations/flutter_localizations.dart';
 
@@ -8,10 +11,12 @@ import 'package:liquid_glass_renderer/liquid_glass_renderer.dart';
 import 'package:flutter/foundation.dart';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show PaintingContextCallback;
 import 'package:flutter/services.dart';
 import 'package:flutter/scheduler.dart';
 
 import 'core/api.dart';
+import 'core/models.dart';
 import 'core/store.dart';
 import 'core/updates.dart';
 import 'screens/updates.dart';
@@ -190,6 +195,12 @@ class _StudioHomeState extends State<StudioHome> with WidgetsBindingObserver {
   }
 
   @override
+  void didHaveMemoryPressure() {
+    PaintingBinding.instance.imageCache.clear();
+    PaintingBinding.instance.imageCache.clearLiveImages();
+  }
+
+  @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) checkUpdates();
   }
@@ -207,6 +218,28 @@ class _StudioHomeState extends State<StudioHome> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    if (widget.store.prefs.getBool('restore_checkpoint') == true) {
+      widget.store.prefs.remove('restore_checkpoint');
+      index = (widget.store.prefs.getInt('last_page') ?? 0).clamp(0, 3);
+      try {
+        final checkpoint = jsonDecode(
+          widget.store.prefs.getString('editor_checkpoint') ?? '{}',
+        );
+        final value = checkpoint['path'];
+        if (value is String && File(value).existsSync()) editorPath = value;
+      } catch (_) {}
+    }
+
+    const MethodChannel('liuguang/memory').setMethodCallHandler((call) async {
+      if (call.method != 'checkpoint') return null;
+      PaintingBinding.instance.imageCache.clear();
+      PaintingBinding.instance.imageCache.clearLiveImages();
+      await widget.store.memoryCheckpoint?.call(call.arguments == true);
+      await widget.store.prefs.setInt('last_page', index);
+      await widget.store.prefs.setBool('restore_checkpoint', true);
+      await widget.store.saveCatalog();
+      return true;
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && widget.store.storageWarning != null) {
         toast(context, widget.store.storageWarning!);
@@ -268,6 +301,13 @@ class _StudioHomeState extends State<StudioHome> with WidgetsBindingObserver {
                             LibraryScreen(
                               store: widget.store,
                               active: index == 2,
+                              onGif: () {
+                                widget.store.defaults.format = 'gif';
+                                widget.store.imageApi.protocol =
+                                    ApiProtocol.gptImage;
+                                widget.store.saveSettings();
+                                setState(() => index = 0);
+                              },
                               onEdit: edit,
                               onReuse: (p) => setState(() {
                                 reusedPrompt = p;
@@ -336,15 +376,151 @@ class StudioPageTransitions extends PageTransitionsBuilder {
     Widget child,
   ) {
     if (MediaQuery.disableAnimationsOf(context)) return child;
-    return SlideTransition(
-      position: Tween(begin: const Offset(1, 0), end: Offset.zero).animate(
-        CurvedAnimation(
-          parent: animation,
-          curve: const Interval(0, .75, curve: Curves.easeOutCubic),
-          reverseCurve: Curves.easeInCubic,
-        ),
-      ),
+    return _StudioRouteTransition(
+      animation: animation,
+      secondaryAnimation: secondaryAnimation,
+      allowSnapshotting: route.allowSnapshotting,
       child: child,
     );
+  }
+}
+
+// Freeze the expensive glass pass only for the bounded page transition.
+// Release the texture at either endpoint; in-page glass stays fully live.
+class _StudioRouteTransition extends StatefulWidget {
+  final Animation<double> animation, secondaryAnimation;
+  final bool allowSnapshotting;
+  final Widget child;
+  const _StudioRouteTransition({
+    required this.animation,
+    required this.secondaryAnimation,
+    required this.allowSnapshotting,
+    required this.child,
+  });
+  @override
+  State<_StudioRouteTransition> createState() => _StudioRouteTransitionState();
+}
+
+class _StudioRouteTransitionState extends State<_StudioRouteTransition> {
+  final snapshot = SnapshotController();
+  late Animation<Offset> position;
+  late CurvedAnimation curve;
+  late _StudioSlidePainter painter;
+
+  void updateSnapshot(AnimationStatus _) {
+    snapshot.allowSnapshotting =
+        !kIsWeb &&
+        widget.allowSnapshotting &&
+        (widget.animation.status.isAnimating ||
+            widget.secondaryAnimation.status.isAnimating);
+  }
+
+  void attach() {
+    curve = CurvedAnimation(
+      parent: widget.animation,
+      curve: Curves.easeOutCubic,
+      reverseCurve: Curves.easeOutCubic,
+    );
+    position = Tween(
+      begin: const Offset(1, 0),
+      end: Offset.zero,
+    ).animate(curve);
+    painter = _StudioSlidePainter(position);
+    widget.animation.addStatusListener(updateSnapshot);
+    widget.secondaryAnimation.addStatusListener(updateSnapshot);
+    updateSnapshot(widget.animation.status);
+  }
+
+  void detach(_StudioRouteTransition previous) {
+    previous.animation.removeStatusListener(updateSnapshot);
+    previous.secondaryAnimation.removeStatusListener(updateSnapshot);
+    painter.dispose();
+    curve.dispose();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    attach();
+  }
+
+  @override
+  void didUpdateWidget(covariant _StudioRouteTransition oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.animation != widget.animation ||
+        oldWidget.secondaryAnimation != widget.secondaryAnimation) {
+      detach(oldWidget);
+      attach();
+    } else {
+      updateSnapshot(widget.animation.status);
+    }
+  }
+
+  @override
+  void dispose() {
+    detach(widget);
+    snapshot.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => SnapshotWidget(
+    controller: snapshot,
+    painter: painter,
+    mode: SnapshotMode.permissive,
+    autoresize: true,
+    child: RepaintBoundary(child: widget.child),
+  );
+}
+
+// Transform the resulting texture, not the capture's widget coordinates.
+// Liquid glass computes its sampling clip in global coordinates; translating
+// the capture itself while rasterizing it at (0, 0) clips the wrong region.
+class _StudioSlidePainter extends SnapshotPainter {
+  final Animation<Offset> position;
+  _StudioSlidePainter(this.position) {
+    position.addListener(notifyListeners);
+  }
+
+  @override
+  void paint(
+    PaintingContext context,
+    Offset offset,
+    Size size,
+    PaintingContextCallback painter,
+  ) {
+    context.pushTransform(
+      true,
+      offset,
+      Matrix4.translationValues(size.width * position.value.dx, 0, 0),
+      painter,
+    );
+  }
+
+  @override
+  void paintSnapshot(
+    PaintingContext context,
+    Offset offset,
+    Size size,
+    ui.Image image,
+    Size imageSize,
+    double pixelRatio,
+  ) {
+    context.canvas.drawImageRect(
+      image,
+      Offset.zero & imageSize,
+      (offset + Offset(size.width * position.value.dx, 0)) & size,
+      Paint()..filterQuality = FilterQuality.low,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _StudioSlidePainter oldPainter) =>
+      oldPainter.position != position;
+
+  @override
+  void dispose() {
+    position.removeListener(notifyListeners);
+    super.dispose();
   }
 }

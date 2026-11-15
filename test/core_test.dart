@@ -59,7 +59,7 @@ void main() {
         GenerationOptions(format: 'gif', moderation: 'low'),
         original,
       );
-      expect(p['output_format'], 'png');
+      expect(p['output_format'], 'gif');
       expect(p['moderation'], 'low');
       expect(p.containsKey('output_compression'), isFalse);
       expect(

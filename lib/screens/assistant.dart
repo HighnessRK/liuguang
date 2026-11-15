@@ -45,11 +45,25 @@ class _AssistantScreenState extends State<AssistantScreen> {
     setState(() => busy = true);
     token = CancelToken();
     try {
+      final history = widget.store.messages.takeLast(30);
+      final position = widget.store.messages.length;
+      widget.store.messages.add(ChatMessage('assistant', ''));
       final reply = await widget.api.chat(
-        widget.store.messages.takeLast(30),
+        history,
         cancelToken: token,
+        onText: (text) {
+          if (mounted) {
+            setState(
+              () => widget.store.messages[position] = ChatMessage(
+                'assistant',
+                text,
+              ),
+            );
+            _toEnd();
+          }
+        },
       );
-      widget.store.messages.add(ChatMessage('assistant', reply));
+      widget.store.messages[position] = ChatMessage('assistant', reply);
       await widget.store.saveCatalog();
     } catch (e) {
       if (mounted) {
@@ -168,7 +182,7 @@ class _AssistantScreenState extends State<AssistantScreen> {
                                     style: TextStyle(
                                       fontSize: 12,
                                       color: user
-                                          ? const Color(0xff24412c)
+                                          ? primaryOn(context, opacity: .78)
                                           : accentInk(context),
                                     ),
                                   ),
@@ -177,7 +191,7 @@ class _AssistantScreenState extends State<AssistantScreen> {
                                     message.text,
                                     style: TextStyle(
                                       color: user
-                                          ? primaryOn(context)
+                                          ? primaryOn(context, opacity: .78)
                                           : ink(context),
                                       fontSize: 14,
                                       height: 1.8,

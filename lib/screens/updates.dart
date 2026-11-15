@@ -25,7 +25,7 @@ Future<void> checkForAppUpdates(BuildContext context, AppStore store) async {
     if (store.prefs.getString('update_seen') == release.version) return;
     await store.prefs.setString('update_seen', release.version);
     if (context.mounted) {
-      await glassSheet(
+      await floatingRelease(
         context,
         ReleaseCard(service: service, release: release),
       );
@@ -69,7 +69,7 @@ class _UpdatesScreenState extends State<UpdatesScreen> {
           compareVersions(value.version, appVersion) > 0 &&
           mounted) {
         setState(() => checking = false);
-        await glassSheet(
+        await floatingRelease(
           context,
           ReleaseCard(service: service, release: value),
         );
@@ -271,7 +271,8 @@ class _VersionLogState extends State<VersionLog> {
   Widget build(BuildContext context) => Column(
     children: [
       for (final entry in [
-        (appVersion, releaseNotes, '2026-11-10'),
+        (appVersion, releaseNotes, '2026-11-15'),
+        ('1.0.4', releaseNotesV104, '2026-11-10'),
         ('1.0.3', releaseNotesV103, '2026-11-10'),
         ('1.0.2', releaseNotesV102, '2026-11-10'),
         ('1.0.1', releaseNotesV101, '2026-11-09'),
@@ -462,3 +463,16 @@ class ChangeTag extends StatelessWidget {
     );
   }
 }
+
+Future<void> floatingRelease(BuildContext context, Widget child) =>
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
+        child: StudioScope(
+          store: StudioScope.of(context),
+          child: SingleChildScrollView(child: child),
+        ),
+      ),
+    );

@@ -80,6 +80,7 @@ GenerationOptions matchedPhotoOptions(
 class GenerationOptions {
   int width, height, count, compression;
   String quality, format, moderation;
+  Map<String, dynamic> advanced;
   GenerationOptions({
     this.width = 1024,
     this.height = 1024,
@@ -88,7 +89,8 @@ class GenerationOptions {
     this.quality = 'high',
     this.format = 'png',
     this.moderation = 'auto',
-  });
+    Map<String, dynamic>? advanced,
+  }) : advanced = Map<String, dynamic>.from(advanced ?? {});
   String get size => '${width}x$height';
   String get aspectLabel {
     const ratios = [(1, 1), (3, 4), (4, 3), (2, 3), (3, 2), (9, 16), (16, 9)];
@@ -112,6 +114,7 @@ class GenerationOptions {
     'quality': quality,
     'format': format,
     'moderation': moderation,
+    'advanced': advanced,
   };
   factory GenerationOptions.fromJson(Map<String, dynamic> j) =>
       GenerationOptions(
@@ -122,6 +125,7 @@ class GenerationOptions {
         quality: j['quality'] ?? 'high',
         format: j['format'] ?? 'png',
         moderation: j['moderation'] ?? 'auto',
+        advanced: Map<String, dynamic>.from(j['advanced'] ?? {}),
       );
 }
 
@@ -130,6 +134,7 @@ class Artwork {
   final DateTime created;
   final int width, height;
   final int? modelWidth, modelHeight;
+  final Map<String, dynamic> parameters;
   bool favorite;
   Artwork({
     required this.id,
@@ -142,6 +147,7 @@ class Artwork {
     required this.height,
     this.modelWidth,
     this.modelHeight,
+    this.parameters = const {},
     this.favorite = false,
   });
   Map<String, dynamic> toJson() => {
@@ -156,6 +162,7 @@ class Artwork {
     'modelWidth': modelWidth,
     'modelHeight': modelHeight,
     'favorite': favorite,
+    'parameters': parameters,
   };
   factory Artwork.fromJson(Map<String, dynamic> j) => Artwork(
     id: j['id'],
@@ -169,6 +176,7 @@ class Artwork {
     modelWidth: j['modelWidth'],
     modelHeight: j['modelHeight'],
     favorite: j['favorite'] ?? false,
+    parameters: Map<String, dynamic>.from(j['parameters'] ?? {}),
   );
 }
 
@@ -231,3 +239,8 @@ class ChatMessage {
 
 String prettyJson(Object value) =>
     const JsonEncoder.withIndent('  ').convert(value);
+
+bool supportsNativeGif(String model) => RegExp(
+  r'(^|[/_:])gpt-image-2\.6(?=$|[-_:/.])',
+  caseSensitive: false,
+).hasMatch(model.trim());

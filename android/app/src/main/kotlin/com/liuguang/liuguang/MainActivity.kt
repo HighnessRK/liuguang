@@ -19,10 +19,63 @@ import java.util.concurrent.Executors
 
 class MainActivity : FlutterActivity() {
     private val executor = Executors.newSingleThreadExecutor()
+    private var memoryReceiver: android.content.BroadcastReceiver? = null
+    private fun registerMemoryReceiver(engine: FlutterEngine) {
+        if (memoryReceiver != null) return
+        val channel = MethodChannel(engine.dartExecutor.binaryMessenger, "liuguang/memory")
+        memoryReceiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(context: android.content.Context, intent: Intent) {
+                val common = intent.getBundleExtra("common") ?: return
+                val callback = common.getBinder("callback") ?: return
+                val type = common.getInt("notifyType")
+                val id = common.getInt("notifyId")
+                val pending = goAsync()
+                val completed = java.util.concurrent.atomic.AtomicBoolean(false)
+                val handler = android.os.Handler(android.os.Looper.getMainLooper())
+                fun reply(status: Int) {
+                    if (!completed.compareAndSet(false, true)) return
+                    kotlin.concurrent.thread(name = "liuguang-memory-ack", isDaemon = true) {
+                        val data = android.os.Parcel.obtain()
+                        try {
+                            data.writeInt(type); data.writeInt(id); data.writeInt(status)
+                            data.writeBundle(android.os.Bundle())
+                            callback.transact(android.os.IBinder.FIRST_CALL_TRANSACTION, data, null, android.os.IBinder.FLAG_ONEWAY)
+                        } catch (_: Exception) { } finally { data.recycle(); pending.finish() }
+                    }
+                }
+                // A stalled engine must still finish the broadcast within the alliance deadline.
+                handler.postDelayed({ reply(1) }, 2400)
+                channel.invokeMethod("checkpoint", intent.action == "itgsa.intent.action.KILL", object: MethodChannel.Result {
+                    override fun success(value: Any?) { reply(if (value == true) 0 else 1) }
+                    override fun error(code: String, message: String?, details: Any?) { reply(1) }
+                    override fun notImplemented() { reply(1) }
+                })
+            }
+        }
+        val filter = android.content.IntentFilter("itgsa.intent.action.TRIM").apply { addAction("itgsa.intent.action.KILL") }
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(memoryReceiver, filter, android.content.Context.RECEIVER_EXPORTED)
+        else registerReceiver(memoryReceiver, filter)
+    }
+    override fun onDestroy() {
+        memoryReceiver?.let { unregisterReceiver(it) }; memoryReceiver = null
+        executor.shutdown()
+        super.onDestroy()
+    }
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        registerMemoryReceiver(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "liuguang/native").setMethodCallHandler { call, result ->
             when (call.method) {
+                "beginProcessing" -> {
+                    try {
+                        val service = Intent(this, ProcessingService::class.java).putExtra("cloud", call.argument<Boolean>("cloud") ?: true).putExtra("local", call.argument<Boolean>("local") ?: false)
+                        if (ProcessingService.running) startService(service) else startForegroundService(service)
+                        result.success(null)
+                    }
+                    catch(e: Exception) { result.error("foreground", "后台任务启动失败", null) }
+                }
+                "endProcessing" -> { stopService(Intent(this, ProcessingService::class.java)); result.success(null) }
+
                 "currentLauncherIcon" -> result.success(LauncherIcons.current(this))
                 "launcherIconPreview" -> {
                     try { result.success(LauncherIcons.preview(this,call.argument<String>("id") ?: "default")) }
@@ -104,5 +157,4 @@ class MainActivity : FlutterActivity() {
             }
         }
     }
-    override fun onDestroy() { executor.shutdown(); super.onDestroy() }
 }

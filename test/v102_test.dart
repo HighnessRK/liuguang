@@ -94,11 +94,18 @@ void main() {
             manifest,
             contains('android:name=".Launcher_$id" android:enabled="false"'),
           );
+          final adaptive = File(
+            'android/app/src/main/res/mipmap-anydpi-v26/launcher_$id.xml',
+          ).readAsStringSync();
+          final resource = RegExp(r'@drawable/(icon_[a-z_]+)')
+              .firstMatch(adaptive)!
+              .group(1)!;
           expect(
-            File('android/app/src/main/res/drawable/icon_$id.webp')
+            File('android/app/src/main/res/drawable/$resource.webp')
                 .existsSync(),
             isTrue,
           );
+          expect(curatedIcons, contains(resource.substring(5)));
           count++;
         }
       }
@@ -277,6 +284,7 @@ void main() {
       final dynamic editor = tester.state(find.byType(EditorScreen));
       await tester.runAsync(() async {
         await editor.load(fixture);
+        editor.analyzeLens = false;
       });
       await tester.pumpAndSettle();
       final y = tester.getCenter(find.text('传奇二瞬')).dy;
