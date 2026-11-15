@@ -1,5 +1,13 @@
 # 验证记录
 
+## V1.0.5 公开发布验证 · 2026-11-16
+
+- 用户确认后，GitHub 与 Gitee 的 v1.0.5 均已公开；两平台源码内容与本地发布提交的 Git tree 一致。
+- 匿名下载两平台的 APK 和 SHA256.txt 均通过：22,999,101 字节，SHA-256 `466d350cce60afdbf10e509404203ce529bf30d3b1046b9cec19f997f7d218fd`，与手机已安装包一致。
+- GitHub latest 与 Gitee 版本列表按语义版本筛选后均为 v1.0.5，提供 HTTPS APK 附件和新增 / 修复 / 优化分类日志。
+- GitHub Release：`https://github.com/HighnessRK/liuguang/releases/tag/v1.0.5`；Gitee Release：`https://gitee.com/highnesssrk/liuguang/releases/tag/v1.0.5`。
+- 发布只同步已验证的源码与二进制，没有重新调用真实模型或改动用户作品。以下“本地待确认”是本次发布之前的验证历史。
+
 ## V1.0.5 发布准备 · 2026-11-16
 
 - 用户已确认发布并推送；以下本地待确认记录为发布前的验证历史。
