@@ -8,6 +8,7 @@ import '../core/api.dart' show beginProcessing, endProcessing;
 import '../core/models.dart';
 import '../core/materials.dart';
 import '../core/store.dart';
+import '../core/store.dart' show saveToGallery;
 import '../ui/glass.dart';
 
 Future<void> shareArtworkCard(
@@ -204,8 +205,45 @@ Future<void> shareArtworkCards(
     if (progress.isActive) navigator.removeRoute(progress);
     count.dispose();
   }
-  if (files.isNotEmpty) {
-    await SharePlus.instance.share(ShareParams(files: files, text: '由琉光创作'));
+  if (files.isNotEmpty && context.mounted) {
+    final choice = await glassSheet<String>(
+      context,
+      Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text(
+            '分享图已生成',
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 14),
+          GlassButton(
+            '保存到相册',
+            icon: Icons.download_rounded,
+            onTap: () => Navigator.pop(context, 'save'),
+          ),
+          const SizedBox(height: 8),
+          GlassButton(
+            '系统分享',
+            icon: Icons.ios_share_rounded,
+            onTap: () => Navigator.pop(context, 'share'),
+          ),
+          const SizedBox(height: 8),
+          GlassButton(
+            '保存并分享',
+            primary: true,
+            icon: Icons.auto_awesome_rounded,
+            onTap: () => Navigator.pop(context, 'both'),
+          ),
+        ],
+      ),
+    );
+    if (choice == 'save' || choice == 'both') {
+      for (final file in files) await saveToGallery(file.path);
+      toast(context, '已保存到相册');
+    }
+    if (choice == 'share' || choice == 'both') {
+      await SharePlus.instance.share(ShareParams(files: files, text: '由琉光创作'));
+    }
   }
 }
 

@@ -29,7 +29,8 @@ class ProcessingService : Service() {
         val cloud = intent?.getBooleanExtra("cloud", true) != false
         val type = (if (cloud || Build.VERSION.SDK_INT < 35) ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC else 0) or (if (local && Build.VERSION.SDK_INT >= 35) ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING else 0)
         startForeground(105, notification, type)
-        return START_NOT_STICKY
+        return START_REDELIVER_INTENT
     }
     override fun onTimeout(startId: Int, fgsType: Int) { stopForeground(STOP_FOREGROUND_REMOVE); stopSelf() }
 }
+

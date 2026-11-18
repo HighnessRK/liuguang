@@ -17,6 +17,7 @@ import '../ui/glass.dart';
 import 'assistant.dart';
 import 'library.dart';
 import 'materials.dart';
+import 'deepseek.dart';
 
 class CreateScreen extends StatefulWidget {
   final AppStore store;
@@ -241,9 +242,22 @@ class _CreateScreenState extends State<CreateScreen> {
     try {
       final paths = await chooseImages(multiple: false);
       if (paths.isNotEmpty && mounted) {
+        final dims = await compute(
+          imageDimensions,
+          await File(paths.first).readAsBytes(),
+        );
+        final fitted = matchedPhotoOptions(
+          dims['width']!,
+          dims['height']!,
+          edge: widget.store.defaults.width > widget.store.defaults.height
+              ? widget.store.defaults.width
+              : widget.store.defaults.height,
+        );
         setState(() {
           base = paths.first;
           mode = 1;
+          options.width = fitted.width;
+          options.height = fitted.height;
         });
         widget.store.prefs.setInt('creation_mode', 1);
       }
@@ -274,22 +288,39 @@ class _CreateScreenState extends State<CreateScreen> {
 
   Future<void> polish() async {
     if (busy || polishing) return;
-    if (prompt.text.trim().isEmpty) {
-      toast(context, '先写下你的创意，再让助手润色');
+    if (prompt.text.trim().isEmpty && base == null && references.isEmpty) {
+      toast(context, '请先输入提示词或添加底图 / 参考图');
       return;
     }
     if (!widget.store.chatApi.ready) {
       widget.onSettings();
       return;
     }
-    final original = prompt.text;
+    final original = prompt.text.trim();
+    final imagePaths = [if (base != null) base!, ...references];
     setState(() {
       polishing = true;
       polishText = '';
     });
     try {
+      final visual = imagePaths.isEmpty
+          ? ''
+          : await widget.api.imageBrief(
+              imagePaths,
+              '为提示词润色提供画面理解与推荐优化方向',
+              cancelToken: token,
+            );
       final improved = await widget.api.chat(
-        [ChatMessage('user', original)],
+        [
+          ChatMessage(
+            'user',
+            [
+              if (original.isNotEmpty) '用户提示词：$original',
+              if (visual.isNotEmpty) '底图 / 参考图理解：$visual',
+              '请综合以上内容输出可直接用于生图的提示词。',
+            ].join('\n\n'),
+          ),
+        ],
         polish: true,
         onText: (value) {
           if (mounted) setState(() => polishText = value);
@@ -488,7 +519,12 @@ class _CreateScreenState extends State<CreateScreen> {
   Widget build(BuildContext context) {
     if (busy) {
       return ListView(
-        padding: const EdgeInsets.fromLTRB(24, 0, 24, 125),
+        padding: EdgeInsets.fromLTRB(
+          24,
+          0,
+          24,
+          28 + StudioTabInset.of(context),
+        ),
         children: [
           const PageHeader(title: '创作'),
           TaskStatusCard(
@@ -519,25 +555,44 @@ class _CreateScreenState extends State<CreateScreen> {
       );
     }
     return ListView(
-      padding: const EdgeInsets.fromLTRB(24, 5, 24, 28),
+      padding: EdgeInsets.fromLTRB(24, 5, 24, 28 + StudioTabInset.of(context)),
       children: [
         PageHeader(
           title: '创作',
-          action: GlassIcon(
-            Icons.forum_outlined,
-            tooltip: '创作助手',
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => AssistantScreen(
-                  store: widget.store,
-                  api: widget.api,
-                  onUsePrompt: (value) {
-                    prompt.text = value;
-                  },
+          action: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              GlassIcon(
+                Icons.forum_outlined,
+                tooltip: '创作助手',
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => AssistantScreen(
+                      store: widget.store,
+                      api: widget.api,
+                      onUsePrompt: (value) {
+                        prompt.text = value;
+                      },
+                    ),
+                  ),
                 ),
               ),
-            ),
+              const SizedBox(width: 8),
+              GlassIcon(
+                Icons.emoji_emotions_outlined,
+                tooltip: 'DeepSeek 表情包',
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => DeepSeekStickerScreen(
+                      store: widget.store,
+                      api: widget.api,
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
 
@@ -779,7 +834,42 @@ class _CreateScreenState extends State<CreateScreen> {
             ),
             GestureDetector(
               behavior: HitTestBehavior.opaque,
-              onTap: widget.onSettings,
+              onTap: busy
+                  ? null
+                  : () async {
+                      final chosen = await glassSheet<String>(
+                        context,
+                        Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Text(
+                              '切换生图模型',
+                              style: TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(height: 14),
+                            for (final id in widget.store.imageApi.models)
+                              ListTile(
+                                title: Text(id),
+                                trailing: id == widget.store.imageApi.model
+                                    ? Icon(
+                                        Icons.check_rounded,
+                                        color: accent(context),
+                                      )
+                                    : null,
+                                onTap: () => Navigator.pop(context, id),
+                              ),
+                          ],
+                        ),
+                      );
+                      if (chosen != null) {
+                        widget.store.imageApi.model = chosen;
+                        await widget.store.saveSettings(keys: true);
+                        if (mounted) setState(() {});
+                      }
+                    },
               child: Text(
                 '切换模型',
                 style: TextStyle(fontSize: 12, color: accentInk(context)),
@@ -847,9 +937,12 @@ class _CreateScreenState extends State<CreateScreen> {
                 behavior: HitTestBehavior.opaque,
                 onTap: () =>
                     openArtwork(context, widget.store, art, widget.onEdit),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(24),
-                  child: Image.file(File(art.path), fit: BoxFit.cover),
+                child: ZoomableImage(
+                  image: FileImage(File(art.path)),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(24),
+                    child: Image.file(File(art.path), fit: BoxFit.cover),
+                  ),
                 ),
               ),
             ),

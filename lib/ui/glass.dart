@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -8,6 +9,16 @@ import '../core/store.dart';
 import '../core/appearance.dart';
 import 'editable.dart';
 export 'editable.dart' show StudioSelectable;
+
+class StudioTabInset extends InheritedWidget {
+  final double bottom;
+  const StudioTabInset({super.key, required this.bottom, required super.child});
+  static double of(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<StudioTabInset>()?.bottom ?? 0;
+  @override
+  bool updateShouldNotify(StudioTabInset oldWidget) =>
+      bottom != oldWidget.bottom;
+}
 
 class StudioScope extends InheritedNotifier<AppStore> {
   const StudioScope({super.key, required AppStore store, required super.child})
@@ -569,79 +580,224 @@ class _TaskStatusCardState extends State<TaskStatusCard>
   }
 
   @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.all(22),
-    decoration: BoxDecoration(
-      borderRadius: BorderRadius.circular(30),
-      gradient: const LinearGradient(
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-        colors: [Color(0xffdbade1), Color(0xffb8b3ed), Color(0xff9dbce9)],
+  Widget build(BuildContext context) => AuroraSurface(
+    controller: controller,
+    radius: 30,
+    child: Padding(
+      padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.auto_awesome_rounded, color: Colors.white, size: 38),
+          const SizedBox(height: 10),
+          Text(
+            widget.title,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              fontSize: 19,
+              fontWeight: FontWeight.w700,
+              color: Colors.white,
+            ),
+          ),
+          const SizedBox(height: 7),
+          Text(
+            widget.stage.replaceAll(RegExp(r'\s+\d+(?:\.\d+)?%$'), ''),
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.white),
+          ),
+          const SizedBox(height: 12),
+          if (widget.progress != null)
+            Text(
+              '${(widget.progress!.clamp(0, 1) * 100).round()}%',
+              style: const TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.w600,
+                color: Colors.white,
+              ),
+            ),
+          Semantics(
+            label: widget.progress == null ? '等待服务端进度' : '生成进度',
+            child: LinearProgressIndicator(
+              value:
+                  widget.progress ??
+                  (MediaQuery.disableAnimationsOf(context) ? 0 : null),
+              color: Colors.white,
+              backgroundColor: Colors.white24,
+              borderRadius: BorderRadius.circular(10),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            '已用时 ${widget.seconds} 秒',
+            style: const TextStyle(fontSize: 12, color: Colors.white),
+          ),
+          if (widget.onCancel != null) ...[
+            const SizedBox(height: 10),
+            GlassButton('取消任务', small: true, onTap: widget.onCancel),
+          ],
+        ],
       ),
     ),
-    child: Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        SizedBox(
-          height: 92,
-          child: Center(
-            child: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                const Icon(Icons.image_outlined, color: Colors.white, size: 64),
-                Positioned(
-                  right: -22,
-                  top: -12,
-                  child: AnimatedBuilder(
-                    animation: controller,
-                    builder: (_, child) => Opacity(
-                      opacity: StudioScope.of(context).reduceMotion
-                          ? 1
-                          : .35 + controller.value * .65,
-                      child: child,
-                    ),
-                    child: const Icon(
-                      Icons.auto_awesome_rounded,
-                      size: 30,
-                      color: Colors.white,
+  );
+}
+
+class AuroraSurface extends StatelessWidget {
+  final Animation<double> controller;
+  final double radius;
+  final Widget child;
+  const AuroraSurface({
+    super.key,
+    required this.controller,
+    required this.radius,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) => Stack(
+    children: [
+      Positioned.fill(
+        child: RepaintBoundary(
+          child: CustomPaint(painter: _AuroraPainter(controller, radius)),
+        ),
+      ),
+      child,
+    ],
+  );
+}
+
+class _AuroraPainter extends CustomPainter {
+  final Animation<double> phase;
+  final double radius;
+  _AuroraPainter(this.phase, this.radius) : super(repaint: phase);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+    final shape = RRect.fromRectAndRadius(rect, Radius.circular(radius));
+    canvas.save();
+    canvas.clipRRect(shape);
+    canvas.drawRect(rect, Paint()..color = const Color(0xff23224f));
+    const colors = [Color(0xffd04b9a), Color(0xff7c54df), Color(0xff0594b0)];
+    final angle = phase.value * math.pi;
+    for (var i = 0; i < colors.length; i++) {
+      final center = Alignment(
+        math.cos(angle + i * 2.1),
+        math.sin(angle + i * 2.1),
+      );
+      canvas.drawRect(
+        rect,
+        Paint()
+          ..shader = RadialGradient(
+            center: center,
+            radius: .96,
+            colors: [colors[i], colors[i].withValues(alpha: 0)],
+          ).createShader(rect),
+      );
+    }
+    canvas.drawRect(rect, Paint()..color = const Color(0x300a1229));
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(_AuroraPainter oldDelegate) =>
+      oldDelegate.phase != phase || oldDelegate.radius != radius;
+}
+
+class AuroraBusyButton extends StatefulWidget {
+  const AuroraBusyButton({super.key});
+  @override
+  State<AuroraBusyButton> createState() => _AuroraBusyButtonState();
+}
+
+class _AuroraBusyButtonState extends State<AuroraBusyButton>
+    with SingleTickerProviderStateMixin {
+  late final motion = AnimationController(
+    vsync: this,
+    duration: const Duration(seconds: 3),
+  );
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (MediaQuery.disableAnimationsOf(context)) {
+      motion.stop();
+    } else if (!motion.isAnimating) {
+      motion.repeat(reverse: true);
+    }
+  }
+
+  @override
+  void dispose() {
+    motion.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AuroraSurface(
+    controller: motion,
+    radius: 16,
+    child: const Padding(
+      padding: EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.auto_awesome_rounded, color: Colors.white, size: 18),
+          SizedBox(width: 7),
+          Text('润色中…', style: TextStyle(color: Colors.white)),
+        ],
+      ),
+    ),
+  );
+}
+
+Future<void> showZoomImage(BuildContext context, ImageProvider image) =>
+    showDialog<void>(
+      context: context,
+      barrierColor: Colors.black87,
+      builder: (ctx) => Dialog.fullscreen(
+        backgroundColor: const Color(0xff101116),
+        child: SafeArea(
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: InteractiveViewer(
+                  minScale: .5,
+                  maxScale: 10,
+                  child: Center(
+                    child: Image(
+                      image: image,
+                      fit: BoxFit.contain,
+                      errorBuilder: (_, _, _) => const Icon(
+                        Icons.broken_image_outlined,
+                        color: Colors.white,
+                      ),
                     ),
                   ),
                 ),
-              ],
-            ),
+              ),
+              Positioned(
+                top: 12,
+                right: 16,
+                child: GlassIcon(
+                  Icons.close_rounded,
+                  tooltip: '关闭大图',
+                  onTap: () => Navigator.pop(ctx),
+                ),
+              ),
+            ],
           ),
         ),
-        Text(
-          widget.title,
-          style: const TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.w600,
-            color: Color(0xff25314f),
-          ),
-        ),
-        const SizedBox(height: 10),
-        Text(
-          widget.progress == null
-              ? widget.stage
-              : '${(widget.progress!.clamp(0, 1) * 100).round()}% · ${widget.stage}',
-          textAlign: TextAlign.center,
-          style: const TextStyle(
-            fontSize: 14,
-            height: 1.5,
-            color: Color(0xff354264),
-          ),
-        ),
-        const SizedBox(height: 14),
-        Text(
-          '已用时 ${widget.seconds} 秒',
-          style: const TextStyle(fontSize: 12, color: Color(0xff354264)),
-        ),
-        if (widget.onCancel != null) ...[
-          const SizedBox(height: 16),
-          GlassButton('取消任务', small: true, onTap: widget.onCancel),
-        ],
-      ],
-    ),
+      ),
+    );
+
+class ZoomableImage extends StatelessWidget {
+  final ImageProvider image;
+  final Widget child;
+  const ZoomableImage({super.key, required this.image, required this.child});
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+    behavior: HitTestBehavior.opaque,
+    onTap: () => showZoomImage(context, image),
+    child: child,
   );
 }
 

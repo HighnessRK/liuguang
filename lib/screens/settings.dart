@@ -25,7 +25,7 @@ class SettingsScreen extends StatelessWidget {
       Navigator.push(context, MaterialPageRoute(builder: (_) => page));
   @override
   Widget build(BuildContext context) => ListView(
-    padding: const EdgeInsets.fromLTRB(24, 0, 24, 28),
+    padding: EdgeInsets.fromLTRB(24, 0, 24, 28 + StudioTabInset.of(context)),
     children: [
       const PageHeader(title: '设置'),
       Glass(

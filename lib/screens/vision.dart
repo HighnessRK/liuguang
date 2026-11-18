@@ -55,12 +55,6 @@ class _VisionSettingsState extends State<VisionSettings> {
   @override
   Widget build(BuildContext context) {
     final children = <Widget>[
-      const SectionLabel('API 基础地址'),
-      GlassField(
-        controller: address,
-        hint: 'https://example.com/v1',
-        onChanged: (_) => scheduleSave(),
-      ),
       const SizedBox(height: 16),
       Row(
         children: [
@@ -74,7 +68,20 @@ class _VisionSettingsState extends State<VisionSettings> {
           ),
         ],
       ),
+      if (widget.store.visionUsesChatKey)
+        Text(
+          widget.store.chatApi.baseUrl.isEmpty
+              ? '请先配置对话模型地址'
+              : widget.store.chatApi.baseUrl,
+          style: TextStyle(fontSize: 12, color: muted(context)),
+        ),
       if (!widget.store.visionUsesChatKey) ...[
+        const SectionLabel('API 基础地址'),
+        GlassField(
+          controller: address,
+          hint: 'https://example.com/v1',
+          onChanged: (_) => scheduleSave(),
+        ),
         const SectionLabel('API Key'),
         GlassField(
           controller: keyField,
@@ -99,10 +106,7 @@ class _VisionSettingsState extends State<VisionSettings> {
                 await persist();
                 setState(() => detecting = true);
                 try {
-                  final config = widget.store.visionApi.snapshot();
-                  if (widget.store.visionUsesChatKey) {
-                    config.key = widget.store.chatApi.key;
-                  }
+                  final config = widget.store.effectiveVisionApi;
                   final models = await widget.api.discover(config);
                   widget.store.visionApi.models = models;
                   await persist();

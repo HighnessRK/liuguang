@@ -65,6 +65,8 @@ class _EditorScreenState extends State<EditorScreen>
       loading = false,
       feather = true;
   String activity = '';
+  String taskTitle = '正在处理照片';
+  double? taskProgress;
   bool manualLens = false;
   bool analyzeLens = true;
   double lensDepth = .5;
@@ -76,6 +78,7 @@ class _EditorScreenState extends State<EditorScreen>
       busy = true;
       activity = stage;
       taskSeconds = 0;
+      taskProgress = null;
     });
     taskTicker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted || !busy) {
@@ -452,6 +455,7 @@ class _EditorScreenState extends State<EditorScreen>
     if (choice == null || !mounted) {
       return;
     }
+    taskTitle = '正在处理照片';
     beginTask('正在导出原始分辨率…');
     try {
       await beginProcessing(local: true);
@@ -496,6 +500,7 @@ class _EditorScreenState extends State<EditorScreen>
     if (path == null || busy) {
       return;
     }
+    taskTitle = '正在处理照片';
     beginTask('正在处理构图…');
     try {
       await beginProcessing(local: true);
@@ -618,6 +623,14 @@ class _EditorScreenState extends State<EditorScreen>
     );
 
     final toneStyle = lensStyle, toneStrength = lensStrength;
+    taskTitle = '正在处理照片';
+    taskTitle = redraw
+        ? '高清重绘'
+        : portrait
+        ? 'AI 人像美化'
+        : lens
+        ? '传奇二瞬'
+        : '局部修图';
     beginTask(lens ? '正在准备增强副本' : '正在准备选区');
     token = CancelToken();
     String? uploadCopy;
@@ -671,7 +684,11 @@ class _EditorScreenState extends State<EditorScreen>
             ? '传奇二瞬'
             : '局部修图',
         onStage: (stage) {
-          if (mounted && activity != stage) setState(() => activity = stage);
+          if (mounted && activity != stage)
+            setState(() {
+              activity = stage;
+              taskProgress = stageProgress(stage) ?? taskProgress;
+            });
         },
       );
       if (!mounted || token?.isCancelled != false) return;
@@ -751,6 +768,7 @@ class _EditorScreenState extends State<EditorScreen>
     if (path == null || busy) {
       return;
     }
+    taskTitle = '正在处理照片';
     beginTask('正在柔化离焦区域…');
     try {
       await beginProcessing(local: true);
@@ -783,6 +801,7 @@ class _EditorScreenState extends State<EditorScreen>
 
   Future<void> applyPortrait() async {
     if (path == null || busy) return;
+    taskTitle = '正在处理照片';
     beginTask('正在本机精修人像…');
     try {
       await beginProcessing(local: true);
@@ -987,121 +1006,142 @@ class _EditorScreenState extends State<EditorScreen>
       );
     }
     return LayoutBuilder(
-      builder: (context, bounds) => Column(
-        children: [
-          if (bounds.maxHeight > 450)
+      builder: (context, bounds) {
+        if (busy) {
+          return ListView(
+            key: const ValueKey('editor-task'),
+            padding: EdgeInsets.fromLTRB(
+              24,
+              0,
+              24,
+              24 + StudioTabInset.of(context),
+            ),
+            children: [
+              header,
+              TaskStatusCard(
+                title: taskTitle,
+                stage: activity,
+                progress: taskProgress,
+                seconds: taskSeconds,
+                onCancel: token == null || token!.isCancelled
+                    ? null
+                    : () {
+                        token?.cancel();
+                        setState(() => activity = '正在取消任务');
+                      },
+              ),
+              const SizedBox(height: 14),
+              photoPreview((bounds.maxHeight * .25).clamp(100.0, 220.0)),
+              if (token != null)
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: GlassButton('关闭图片', small: true, onTap: closeImage),
+                ),
+              Align(
+                alignment: Alignment.centerRight,
+                child: GlassButton('导出', primary: true, small: true),
+              ),
+            ],
+          );
+        }
+        return Column(
+          children: [
+            if (bounds.maxHeight > 450)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: header,
+              ),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 24),
-              child: header,
+              child: photoPreview((bounds.maxHeight * .37).clamp(120.0, 340.0)),
             ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: photoPreview((bounds.maxHeight * .37).clamp(120.0, 340.0)),
-          ),
-          const SizedBox(height: 12),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: Row(
-              children: [
-                if (bounds.maxHeight <= 450) ...[
+            const SizedBox(height: 12),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Row(
+                children: [
+                  if (bounds.maxHeight <= 450) ...[
+                    GlassIcon(
+                      Icons.close_rounded,
+                      tooltip: '关闭图片',
+                      onTap: loading || (busy && token == null)
+                          ? null
+                          : closeImage,
+                    ),
+                    const SizedBox(width: 8),
+                  ],
                   GlassIcon(
-                    Icons.close_rounded,
-                    tooltip: '关闭图片',
-                    onTap: loading || (busy && token == null)
-                        ? null
-                        : closeImage,
+                    Icons.undo_rounded,
+                    tooltip: '撤销',
+                    onTap: busy || undo.isEmpty ? null : () => restore(false),
                   ),
                   const SizedBox(width: 8),
+                  GlassIcon(
+                    Icons.redo_rounded,
+                    tooltip: '重做',
+                    onTap: busy || redo.isEmpty ? null : () => restore(true),
+                  ),
+                  const Spacer(),
+                  GlassButton(
+                    '导出',
+                    primary: true,
+                    small: true,
+                    icon: Icons.ios_share_rounded,
+                    onTap: busy ? null : export,
+                  ),
                 ],
-                GlassIcon(
-                  Icons.undo_rounded,
-                  tooltip: '撤销',
-                  onTap: busy || undo.isEmpty ? null : () => restore(false),
-                ),
-                const SizedBox(width: 8),
-                GlassIcon(
-                  Icons.redo_rounded,
-                  tooltip: '重做',
-                  onTap: busy || redo.isEmpty ? null : () => restore(true),
-                ),
-                const Spacer(),
-                GlassButton(
-                  '导出',
-                  primary: true,
-                  small: true,
-                  icon: Icons.ios_share_rounded,
-                  onTap: busy ? null : export,
-                ),
-              ],
+              ),
             ),
-          ),
-          const SizedBox(height: 14),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: LayoutBuilder(
-              builder: (context, c) {
-                final slot = math.max(
-                  56.0,
-                  MediaQuery.textScalerOf(context).scale(44) + 10,
-                );
-                return SizedBox(
-                  height: 66,
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: ConstrainedBox(
-                      constraints: BoxConstraints(minWidth: c.maxWidth),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          for (final i in [4, 5, 0, 1, 2, 3])
-                            Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 2,
-                              ),
-                              child: GestureDetector(
-                                onTap: busy
-                                    ? null
-                                    : () => setState(() => tool = i),
-                                child: Glass(
-                                  radius: 16,
-                                  padding: EdgeInsets.zero,
-                                  tint: tool == i ? accent(context) : null,
-                                  opacity: tool == i ? 0.65 : null,
-                                  child: SizedBox(
-                                    width: slot - 4,
-                                    height: 64,
-                                    child: Column(
-                                      mainAxisSize: MainAxisSize.min,
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.center,
-                                      children: [
-                                        Icon(
-                                          [
-                                            Icons.tune_rounded,
-                                            Icons.palette_outlined,
-                                            Icons.crop_rounded,
-                                            Icons.brush_outlined,
-                                            Icons.auto_awesome_rounded,
-                                            Icons.face_retouching_natural,
-                                          ][i],
-                                          size: 21,
-                                          color: tool == i
-                                              ? primaryOn(context, opacity: .65)
-                                              : ink(context),
-                                        ),
-                                        const SizedBox(height: 6),
-                                        Text(
-                                          [
-                                            '调色',
-                                            '色彩平衡',
-                                            '裁切',
-                                            '局部修图',
-                                            '传奇二瞬',
-                                            '人像美化',
-                                          ][i],
-                                          maxLines: 1,
-                                          style: TextStyle(
-                                            fontSize: 11,
+            const SizedBox(height: 14),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: LayoutBuilder(
+                builder: (context, c) {
+                  final slot = math.max(
+                    56.0,
+                    MediaQuery.textScalerOf(context).scale(44) + 10,
+                  );
+                  return SizedBox(
+                    height: 66,
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(minWidth: c.maxWidth),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            for (final i in [4, 5, 0, 1, 2, 3])
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 2,
+                                ),
+                                child: GestureDetector(
+                                  onTap: busy
+                                      ? null
+                                      : () => setState(() => tool = i),
+                                  child: Glass(
+                                    radius: 16,
+                                    padding: EdgeInsets.zero,
+                                    tint: tool == i ? accent(context) : null,
+                                    opacity: tool == i ? 0.65 : null,
+                                    child: SizedBox(
+                                      width: slot - 4,
+                                      height: 64,
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                        children: [
+                                          Icon(
+                                            [
+                                              Icons.tune_rounded,
+                                              Icons.palette_outlined,
+                                              Icons.crop_rounded,
+                                              Icons.brush_outlined,
+                                              Icons.auto_awesome_rounded,
+                                              Icons.face_retouching_natural,
+                                            ][i],
+                                            size: 21,
                                             color: tool == i
                                                 ? primaryOn(
                                                     context,
@@ -1109,81 +1149,84 @@ class _EditorScreenState extends State<EditorScreen>
                                                   )
                                                 : ink(context),
                                           ),
-                                        ),
-                                      ],
+                                          const SizedBox(height: 6),
+                                          Text(
+                                            [
+                                              '调色',
+                                              '色彩平衡',
+                                              '裁切',
+                                              '局部修图',
+                                              '传奇二瞬',
+                                              '人像美化',
+                                            ][i],
+                                            maxLines: 1,
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              color: tool == i
+                                                  ? primaryOn(
+                                                      context,
+                                                      opacity: .65,
+                                                    )
+                                                  : ink(context),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
                                     ),
                                   ),
                                 ),
                               ),
-                            ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
-                  ),
-                );
-              },
+                  );
+                },
+              ),
             ),
-          ),
-          const SizedBox(height: 8),
-          GlassButton(
-            '高清重绘',
-            small: true,
-            icon: Icons.hd_outlined,
-            onTap: busy ? null : () => cloudEdit(redraw: true),
-          ),
-          const SizedBox(height: 8),
-          Expanded(
-            child: ClipRect(
-              child: lgr.LiquidGlassLayer(
-                settings: glassSettings(context),
-                child: ListView(
-                  key: ValueKey(busy ? 'editor-task' : 'editor-tool-$tool'),
-                  padding: const EdgeInsets.fromLTRB(24, 0, 24, 28),
-                  children: [
-                    if (busy)
-                      TaskStatusCard(
-                        title: token == null
-                            ? '正在处理照片'
-                            : tool == 4
-                            ? '传奇二瞬ing'
-                            : tool == 5
-                            ? '人像美化ing'
-                            : 'AI 修图ing',
-                        stage: activity,
-                        progress: stageProgress(activity),
-                        seconds: taskSeconds,
-                        onCancel: token == null || token!.isCancelled
-                            ? null
-                            : () {
-                                token?.cancel();
-                                setState(() => activity = '正在取消任务');
-                              },
-                      )
-                    else
-                      IgnorePointer(
-                        ignoring: busy,
-                        child: switch (tool) {
-                          0 => adjustmentControls(),
-                          1 => balanceControls(),
-                          2 => cropControls(),
-                          3 => maskControls(),
-                          5 => portraitControls(),
-                          _ => lensControls(),
-                        },
-                      ),
-                    const SizedBox(height: 16),
-                    Text(
-                      '修改以副本保存，原图保留。',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 12, color: muted(context)),
+            const SizedBox(height: 8),
+            GlassButton(
+              '高清重绘',
+              small: true,
+              icon: Icons.hd_outlined,
+              onTap: busy ? null : () => cloudEdit(redraw: true),
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: ClipRect(
+                child: lgr.LiquidGlassLayer(
+                  settings: glassSettings(context),
+                  child: ListView(
+                    key: ValueKey(busy ? 'editor-task' : 'editor-tool-$tool'),
+                    padding: EdgeInsets.fromLTRB(
+                      24,
+                      0,
+                      24,
+                      28 + StudioTabInset.of(context),
                     ),
-                  ],
+                    children: [
+                      switch (tool) {
+                        0 => adjustmentControls(),
+                        1 => balanceControls(),
+                        2 => cropControls(),
+                        3 => maskControls(),
+                        5 => portraitControls(),
+                        _ => lensControls(),
+                      },
+                      const SizedBox(height: 16),
+                      Text(
+                        '修改以副本保存，原图保留。',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(fontSize: 12, color: muted(context)),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
-          ),
-        ],
-      ),
+          ],
+        );
+      },
     );
   }
 

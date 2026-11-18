@@ -273,65 +273,67 @@ class _StudioHomeState extends State<StudioHome> with WidgetsBindingObserver {
           child: Stack(
             children: [
               Positioned.fill(
-                bottom: MediaQuery.viewInsetsOf(context).bottom == 0
-                    ? MediaQuery.paddingOf(context).bottom + 90
-                    : 0,
-                child: IndexedStack(
-                  index: index,
-                  children:
-                      [
-                            CreateScreen(
-                              store: widget.store,
-                              api: api,
-                              initialPrompt: reusedPrompt,
-                              onSettings: () => setState(() => index = 3),
-                              onEdit: edit,
-                            ),
-                            EditorScreen(
-                              key: ValueKey(editorRevision),
-                              store: widget.store,
-                              api: api,
-                              initialPath: editorPath,
-                              onClose: () => setState(() {
-                                editorPath = null;
-                                editorRevision++;
-                              }),
-                              onSettings: () => setState(() => index = 3),
-                            ),
-                            LibraryScreen(
-                              store: widget.store,
-                              active: index == 2,
-                              onGif: () {
-                                widget.store.defaults.format = 'gif';
-                                widget.store.imageApi.protocol =
-                                    ApiProtocol.gptImage;
-                                widget.store.saveSettings();
-                                setState(() => index = 0);
-                              },
-                              onEdit: edit,
-                              onReuse: (p) => setState(() {
-                                reusedPrompt = p;
-                                index = 0;
-                              }),
-                            ),
-                            SettingsScreen(store: widget.store, api: api),
-                          ]
-                          .asMap()
-                          .entries
-                          .map(
-                            (entry) => TickerMode(
-                              enabled: entry.key == index,
-                              child: RepaintBoundary(
-                                child: ClipRect(
-                                  child: LiquidGlassLayer(
-                                    settings: glassSettings(context),
-                                    child: entry.value,
+                child: StudioTabInset(
+                  bottom: MediaQuery.viewInsetsOf(context).bottom == 0
+                      ? MediaQuery.paddingOf(context).bottom + 90
+                      : 0,
+                  child: IndexedStack(
+                    index: index,
+                    children:
+                        [
+                              CreateScreen(
+                                store: widget.store,
+                                api: api,
+                                initialPrompt: reusedPrompt,
+                                onSettings: () => setState(() => index = 3),
+                                onEdit: edit,
+                              ),
+                              EditorScreen(
+                                key: ValueKey(editorRevision),
+                                store: widget.store,
+                                api: api,
+                                initialPath: editorPath,
+                                onClose: () => setState(() {
+                                  editorPath = null;
+                                  editorRevision++;
+                                }),
+                                onSettings: () => setState(() => index = 3),
+                              ),
+                              LibraryScreen(
+                                store: widget.store,
+                                active: index == 2,
+                                onGif: () {
+                                  widget.store.defaults.format = 'gif';
+                                  widget.store.imageApi.protocol =
+                                      ApiProtocol.gptImage;
+                                  widget.store.saveSettings();
+                                  setState(() => index = 0);
+                                },
+                                onEdit: edit,
+                                onReuse: (p) => setState(() {
+                                  reusedPrompt = p;
+                                  index = 0;
+                                }),
+                              ),
+                              SettingsScreen(store: widget.store, api: api),
+                            ]
+                            .asMap()
+                            .entries
+                            .map(
+                              (entry) => TickerMode(
+                                enabled: entry.key == index,
+                                child: RepaintBoundary(
+                                  child: ClipRect(
+                                    child: LiquidGlassLayer(
+                                      settings: glassSettings(context),
+                                      child: entry.value,
+                                    ),
                                   ),
                                 ),
                               ),
-                            ),
-                          )
-                          .toList(),
+                            )
+                            .toList(),
+                  ),
                 ),
               ),
               if (MediaQuery.viewInsetsOf(context).bottom == 0)

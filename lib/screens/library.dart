@@ -380,6 +380,9 @@ class _LibraryScreenState extends State<LibraryScreen>
             ),
           ),
         const SliverToBoxAdapter(child: SizedBox(height: 28)),
+        SliverToBoxAdapter(
+          child: SizedBox(height: StudioTabInset.of(context) + 20),
+        ),
       ],
     );
   }

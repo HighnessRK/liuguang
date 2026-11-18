@@ -56,7 +56,7 @@ String canvasPrompt(String original, GenerationOptions options) =>
         ? '竖向构图，不能生成横向画面'
         : options.width > options.height
         ? '横向构图，不能生成竖向画面'
-        : '正方形构图'}。保持原提示词的主体和创作意图。';
+        : '正方形构图'}。保持原提示词的主体和创作意图。画面自然铺满画布四边，去掉无意的白边、信箱边和装饰相框。';
 bool usesSuixiangTasks(EndpointConfig config) =>
     {
       'www.sui-xiang.net',
@@ -101,7 +101,14 @@ Map<String, dynamic> imagePayload(
     }
   }
   for (final entry in options.advanced.entries) {
-    if (!{'seed', 'steps', 'guidance_scale', 'sampler'}.contains(entry.key)) {
+    if (!{
+      'seed',
+      'steps',
+      'guidance_scale',
+      'sampler',
+      'frame_count',
+      'frame_duration_ms',
+    }.contains(entry.key)) {
       throw StudioException('不支持的专业参数：${entry.key}');
     }
     final value = entry.value;
@@ -340,6 +347,7 @@ class StudioApi {
           );
         }
         data = response.data;
+        onStage?.call('模型正在处理，请稍候');
         if (async) {
           final id = data is Map ? data['id']?.toString() : null;
           if (id == null || !RegExp(r'^[A-Za-z0-9_-]{1,200}$').hasMatch(id)) {
@@ -350,10 +358,10 @@ class StudioApi {
             if (cancelToken?.isCancelled == true) {
               throw cancelToken!.cancelError!;
             }
+            onStage?.call('模型正在处理，请稍候');
             if (DateTime.now().isAfter(deadline)) {
               throw StudioException('任务等待超时，服务端可能仍在处理；请到服务商控制台查询，避免重复扣费');
             }
-            onStage?.call('模型正在处理，请稍候');
             await Future.any<void>([
               Future<void>.delayed(pollInterval),
               if (cancelToken != null)
@@ -517,8 +525,7 @@ class StudioApi {
     CancelToken? cancelToken,
     String goal = 'depth',
   }) async {
-    final config = store.visionApi.snapshot();
-    if (store.visionUsesChatKey) config.key = store.chatApi.key;
+    final config = store.effectiveVisionApi;
     if (!config.ready) throw StudioException('请先配置识图模型地址、Key 与模型 ID');
     final watch = Stopwatch()..start();
     Map<String, dynamic>? usage;
@@ -541,7 +548,9 @@ class StudioApi {
               'content': [
                 {
                   'type': 'text',
-                  'text': goal == 'gif'
+                  'text': goal.startsWith('brief:')
+                      ? goal.substring(6)
+                      : goal == 'gif'
                       ? '依据图片生成一段适合原生 GIF 动画的中文提示词：明确可动主体、合理的小幅动作、起止姿态、动作节奏、固定镜头或必要镜头运动、平滑循环方式。保留主体身份、场景和构图，只安排画面中真实存在物体的自然运动，不凭空增加人物或物件。只输出可直接使用的动态提示词。'
                       : '用中文简洁描述这张图片的主体、前景中景远景、光线、焦点、色彩与适合的自然景深。只依据可见内容，不猜测身份。',
                 },
@@ -587,6 +596,24 @@ class StudioApi {
         failure,
       );
     }
+  }
+
+  Future<String> imageBrief(
+    List<String> paths,
+    String instruction, {
+    CancelToken? cancelToken,
+  }) async {
+    final descriptions = <String>[];
+    for (final (index, path) in paths.indexed) {
+      if (cancelToken?.isCancelled == true) throw cancelToken!.cancelError!;
+      final description = await describeImage(
+        path,
+        goal: 'brief:$instruction',
+        cancelToken: cancelToken,
+      );
+      descriptions.add('图片 ${index + 1}：$description');
+    }
+    return descriptions.join('\n\n');
   }
 
   Future<String> chat(

@@ -1,6 +1,9 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
+
+import 'dart:io';
 
 import '../core/api.dart';
 import '../core/models.dart';
@@ -26,6 +29,8 @@ class _AssistantScreenState extends State<AssistantScreen> {
   final scroll = ScrollController();
   bool busy = false;
   CancelToken? token;
+  String? attachedImage;
+  bool imageBusy = false;
   @override
   void dispose() {
     token?.cancel();
@@ -34,18 +39,35 @@ class _AssistantScreenState extends State<AssistantScreen> {
     super.dispose();
   }
 
+  Future<void> attach() async {
+    final file = await ImagePicker().pickImage(source: ImageSource.gallery);
+    if (file != null && mounted) setState(() => attachedImage = file.path);
+  }
+
   Future<void> send() async {
-    if (busy || input.text.trim().isEmpty) {
+    if (busy || (input.text.trim().isEmpty && attachedImage == null)) {
       return;
     }
     final text = input.text.trim();
+    final image = attachedImage;
     input.clear();
+    setState(() => attachedImage = null);
     widget.store.messages.add(ChatMessage('user', text));
     await widget.store.saveCatalog();
     setState(() => busy = true);
     token = CancelToken();
     try {
+      final visual = image == null
+          ? ''
+          : await widget.api.describeImage(
+              image,
+              goal: 'assistant',
+              cancelToken: token,
+            );
       final history = widget.store.messages.takeLast(30);
+      if (visual.isNotEmpty)
+        widget.store.messages.add(ChatMessage('user', '图片理解：$visual'));
+      if (text.isNotEmpty) widget.store.messages.add(ChatMessage('user', text));
       final position = widget.store.messages.length;
       widget.store.messages.add(ChatMessage('assistant', ''));
       final reply = await widget.api.chat(
@@ -111,6 +133,45 @@ class _AssistantScreenState extends State<AssistantScreen> {
                       ),
                     ),
                   ),
+                  GlassIcon(
+                    Icons.swap_horiz_rounded,
+                    tooltip: '切换模型',
+                    onTap: () async {
+                      final model = await glassSheet<String>(
+                        context,
+                        Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Text(
+                              '切换对话模型',
+                              style: TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            for (final id in widget.store.chatApi.models)
+                              ListTile(
+                                title: Text(id),
+                                trailing: id == widget.store.chatApi.model
+                                    ? Icon(
+                                        Icons.check_rounded,
+                                        color: accent(context),
+                                      )
+                                    : null,
+                                onTap: () => Navigator.pop(context, id),
+                              ),
+                          ],
+                        ),
+                      );
+                      if (model != null) {
+                        widget.store.chatApi.model = model;
+                        await widget.store.saveSettings(keys: true);
+                        if (mounted) setState(() {});
+                      }
+                    },
+                  ),
+                  const SizedBox(width: 8),
                   GlassIcon(
                     Icons.delete_outline_rounded,
                     tooltip: '清空对话',
@@ -270,7 +331,14 @@ class _AssistantScreenState extends State<AssistantScreen> {
               padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.end,
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
+                  GlassIcon(
+                    Icons.add_photo_alternate_outlined,
+                    tooltip: '上传图片',
+                    onTap: busy ? null : attach,
+                  ),
+                  const SizedBox(width: 8),
                   Expanded(
                     child: GlassField(
                       controller: input,

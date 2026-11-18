@@ -17,6 +17,15 @@ class AppStore extends ChangeNotifier {
   EndpointConfig imageApi = EndpointConfig(), chatApi = EndpointConfig();
   EndpointConfig visionApi = EndpointConfig();
   bool visionUsesChatKey = true;
+  EndpointConfig get effectiveVisionApi {
+    final config = visionApi.snapshot();
+    if (visionUsesChatKey) {
+      config.baseUrl = chatApi.baseUrl;
+      config.key = chatApi.key;
+    }
+    return config;
+  }
+
   GenerationOptions defaults = GenerationOptions(width: 4096, height: 4096);
   List<Artwork> artworks = [];
   List<UsageRecord> usage = [];
