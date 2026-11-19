@@ -9,6 +9,7 @@ import '../core/imaging.dart';
 import '../core/models.dart';
 import '../core/store.dart';
 import '../ui/glass.dart';
+import 'custom_sticker.dart';
 
 class DeepSeekStickerScreen extends StatefulWidget {
   final AppStore store;
@@ -245,6 +246,25 @@ ${text.text.trim()}''',
                 '生成表情包',
                 icon: Icons.auto_awesome_rounded,
                 onTap: busy ? null : generate,
+              ),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: GlassButton(
+                '创建其他表情角色',
+                icon: Icons.person_add_alt_1_rounded,
+                onTap: busy
+                    ? null
+                    : () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => StickerCharacterCreatorScreen(
+                            store: widget.store,
+                            api: widget.api,
+                          ),
+                        ),
+                      ),
               ),
             ),
           ],

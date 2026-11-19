@@ -59,9 +59,13 @@ class AppStore extends ChangeNotifier {
       support = await getApplicationSupportDirectory();
     } catch (_) {
       // Some MIUI/Flutter combinations fail the JNI Context lookup in
-      // path_provider_android during cold start. Dart's app-private temp path
-      // is still available and keeps the studio usable while the plugin fails.
-      support = Directory(Directory.systemTemp.path);
+      // path_provider_android during cold start. V1.0.7 stored the catalog
+      // in the normal app-files directory, so prefer that legacy location
+      // before falling back to a temporary directory.
+      final legacy = Directory('/data/user/0/com.liuguang.liuguang/files');
+      support = await legacy.exists()
+          ? legacy
+          : Directory(Directory.systemTemp.path);
     }
     directory = Directory('${support.path}/studio');
     await directory.create(recursive: true);

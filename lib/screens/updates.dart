@@ -276,6 +276,7 @@ class _VersionLogState extends State<VersionLog> {
     children: [
       for (final entry in [
         (appVersion, releaseNotes, '2026-11-19'),
+        ('1.0.8', releaseNotesV108, '2026-11-19'),
         ('1.0.7', releaseNotesV107, '2026-11-19'),
         ('1.0.6', releaseNotesV106, '2026-11-18'),
         ('1.0.4', releaseNotesV104, '2026-11-10'),

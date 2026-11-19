@@ -119,6 +119,8 @@ Map<String, dynamic> imagePayload(
         value is num && value.isFinite && value >= 1 && value <= 20,
       'sampler' =>
         value is String && value.trim().isNotEmpty && value.length <= 120,
+      'frame_count' => value is int && value >= 2 && value <= 16,
+      'frame_duration_ms' => value is int && value >= 20 && value <= 2000,
       _ => false,
     };
     if (!valid) throw StudioException('专业参数 ${entry.key} 超出允许范围');

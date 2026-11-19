@@ -6,12 +6,15 @@ import 'package:flutter/services.dart';
 
 import 'store.dart';
 
-const appVersion = '1.0.8';
-const releaseNotes =
-    '''修复：解决部分小米设备启动时 path_provider JNI Context 查找失败导致应用无法进入首页的问题。
+const appVersion = '1.0.9';
+const releaseNotes = '''修复：恢复 V1.0.7 之前保存在应用 files/studio 目录中的作品、请求明细和历史消息。
+修复：放宽 GIF 专业参数校验，支持 frame_count 2–16、frame_duration_ms 20–2000，并固定表情包为 8 帧 / 200ms。
+新增：创建其他表情角色，上传三视图和基本描述后由对话模型整理角色设定。
+新增：自定义角色可像大肥鱼娘一样输入表情文本生成静态或动图表情包。''';
+const releaseNotesV108 =
+    '''修复：解决小米设备冷启动时 path_provider JNI Context 查找失败导致应用无法进入首页的问题。
 新增：创作页将 DeepSeek 表情包入口与文生图、图生图并列，入口更易发现。
-修复：DeepSeek 表情包入口返回与创作页状态衔接。
-优化：继续完善冷启动兼容和真机启动稳定性。''';
+优化：DeepSeek 页面间距与生成按钮统一为液态玻璃风格。''';
 const releaseNotesV107 = '''新增：完成 V1.0.6 的 16 项功能复核，补齐全图点击放大、后台任务、流式进度和创作助手图片理解。
 新增：DeepSeek 大肥鱼娘参考图完整展示，动图固定 512 × 512、8 帧、每帧 200 ms。
 修复：更新弹窗改用当前版本日志，避免显示上一版本内容。
