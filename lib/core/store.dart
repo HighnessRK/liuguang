@@ -36,7 +36,11 @@ class AppStore extends ChangeNotifier {
     return config;
   }
 
-  GenerationOptions defaults = GenerationOptions(width: 4096, height: 4096);
+  GenerationOptions defaults = GenerationOptions(
+    width: 4096,
+    height: 4096,
+    count: 1,
+  );
   List<Artwork> artworks = [];
   List<UsageRecord> usage = [];
   List<ChatMessage> messages = [];
@@ -127,13 +131,14 @@ class AppStore extends ChangeNotifier {
       await prefs.setInt('visual_revision', 3);
       await saveSettings();
     }
-    if (prefs.getInt('generation_defaults_revision') != 102) {
+    defaults.count = 1;
+    if (prefs.getInt('generation_defaults_revision') != 103) {
       final edge = defaults.width > defaults.height
           ? defaults.width
           : defaults.height;
       defaults.width = (defaults.width * 4096 / edge / 16).round() * 16;
       defaults.height = (defaults.height * 4096 / edge / 16).round() * 16;
-      await prefs.setInt('generation_defaults_revision', 102);
+      await prefs.setInt('generation_defaults_revision', 103);
       await saveSettings();
     }
   }
@@ -210,6 +215,17 @@ class AppStore extends ChangeNotifier {
     usage.insert(0, record);
     await saveCatalog();
   }
+
+  Future<void> setArtworkHidden(Iterable<String> ids, bool hidden) async {
+    final target = ids.toSet();
+    for (final art in artworks) {
+      if (target.contains(art.id)) art.hidden = hidden;
+    }
+    await saveCatalog();
+  }
+
+  Future<void> restoreArtwork(Artwork art) async =>
+      setArtworkHidden([art.id], false);
 
   void refresh() => notifyListeners();
 }

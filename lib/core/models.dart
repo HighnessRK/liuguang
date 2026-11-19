@@ -136,6 +136,7 @@ class Artwork {
   final int? modelWidth, modelHeight;
   final Map<String, dynamic> parameters;
   bool favorite;
+  bool hidden;
   Artwork({
     required this.id,
     required this.path,
@@ -149,6 +150,7 @@ class Artwork {
     this.modelHeight,
     this.parameters = const {},
     this.favorite = false,
+    this.hidden = false,
   });
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -162,6 +164,7 @@ class Artwork {
     'modelWidth': modelWidth,
     'modelHeight': modelHeight,
     'favorite': favorite,
+    'hidden': hidden,
     'parameters': parameters,
   };
   factory Artwork.fromJson(Map<String, dynamic> j) => Artwork(
@@ -176,6 +179,7 @@ class Artwork {
     modelWidth: j['modelWidth'],
     modelHeight: j['modelHeight'],
     favorite: j['favorite'] ?? false,
+    hidden: j['hidden'] ?? false,
     parameters: Map<String, dynamic>.from(j['parameters'] ?? {}),
   );
 }

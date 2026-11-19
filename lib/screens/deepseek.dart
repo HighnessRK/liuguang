@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -27,11 +29,34 @@ class _DeepSeekStickerScreenState extends State<DeepSeekStickerScreen> {
   final text = TextEditingController();
   bool animated = false, busy = false;
   double progress = 0;
+  int seconds = 0;
+  Timer? timer;
   CancelToken? token;
   String stage = '等待生成';
+  List<StickerProfile> profiles = [];
+  StickerProfile? selectedProfile;
+  @override
+  void initState() {
+    super.initState();
+    final raw = widget.store.prefs.getStringList('sticker_profiles') ?? [];
+    profiles = raw
+        .map((v) {
+          try {
+            return StickerProfile.fromJson(jsonDecode(v));
+          } catch (_) {
+            return null;
+          }
+        })
+        .whereType<StickerProfile>()
+        .toList();
+    final selectedId = widget.store.prefs.getString('last_sticker_profile');
+    selectedProfile = profiles.where((p) => p.id == selectedId).firstOrNull;
+  }
+
   @override
   void dispose() {
     token?.cancel();
+    timer?.cancel();
     text.dispose();
     super.dispose();
   }
@@ -52,6 +77,11 @@ class _DeepSeekStickerScreenState extends State<DeepSeekStickerScreen> {
     }
     setState(() {
       busy = true;
+      seconds = 0;
+      timer?.cancel();
+      timer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (mounted) setState(() => seconds++);
+      });
       stage = '对话模型正在理解表情文本';
       progress = .08;
     });
@@ -61,10 +91,13 @@ class _DeepSeekStickerScreenState extends State<DeepSeekStickerScreen> {
         ChatMessage(
           'user',
           '''请把以下表情包文字设计成画面指令，保留大肥鱼娘基本形象，明确动作、道具、表情、构图和文字位置。只输出生图模型可执行的中文提示词。
-${text.text.trim()}''',
+${text.text.trim()}
+角色设定：${selectedProfile?.description ?? '保持大肥鱼娘固定形象'}''',
         ),
       ], cancelToken: token);
-      final path = await referencePath();
+      final paths = selectedProfile?.references.isNotEmpty == true
+          ? selectedProfile!.references
+          : [await referencePath()];
       setState(() {
         stage = animated ? '生图模型正在生成动图' : '生图模型正在生成表情包';
         progress = .25;
@@ -76,21 +109,21 @@ ${text.text.trim()}''',
               format: 'gif',
               quality: 'high',
               count: 1,
-              advanced: {'frame_count': 8, 'frame_duration_ms': 200},
+              advanced: {'frame_count': 8, 'frame_duration_ms': 150},
             )
           : GenerationOptions(
               width: 4096,
               height: 4096,
-              format: 'png',
+              format: 'jpeg',
               quality: 'high',
             );
       final reply = await widget.api.generate(
         prompt:
             '''$brief
 画面文字：${text.text.trim()}
-保持蓝发、女仆装、鱼尾和统一角色设计，保持帧间一致性，smooth motion，consistent character，画面铺满画布，不要白边。''',
+保持蓝发、女仆装、鱼尾和统一角色设计，保持帧间一致性，smooth motion，consistent character，帧间一致性约束，画面铺满画布，不要白边。''',
         options: options,
-        inputs: [path],
+        inputs: paths,
         cancelToken: token,
         operation: animated ? 'DeepSeek 动图表情包' : 'DeepSeek 静态表情包',
         onStage: (v) {
@@ -112,12 +145,17 @@ ${text.text.trim()}''',
           prompt: text.text.trim(),
           model: widget.store.imageApi.model,
           kind: animated ? 'DeepSeek 动图表情包' : 'DeepSeek 表情包',
+          format: animated ? 'gif' : 'jpeg',
         );
       }
-      if (mounted) toast(context, '已保存到作品');
+      if (mounted) {
+        toast(context, '已保存到作品');
+        Navigator.of(context).popUntil((route) => route.isFirst);
+      }
     } catch (e) {
       if (mounted) toast(context, describeError(e));
     } finally {
+      timer?.cancel();
       if (mounted) setState(() => busy = false);
     }
   }
@@ -131,10 +169,72 @@ ${text.text.trim()}''',
           children: [
             PageHeader(
               title: 'DeepSeek 表情包',
-              action: GlassIcon(
-                Icons.arrow_back_rounded,
-                tooltip: '返回',
-                onTap: () => Navigator.pop(context),
+              action: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  GlassIcon(
+                    Icons.swap_horiz_rounded,
+                    tooltip: '切换表情角色',
+                    onTap: busy
+                        ? null
+                        : () async {
+                            final picked = await glassSheet<StickerProfile>(
+                              context,
+                              Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Text(
+                                    '选择表情角色',
+                                    style: TextStyle(
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  ListTile(
+                                    title: const Text('DeepSeek 大肥鱼娘'),
+                                    onTap: () => Navigator.pop(context, null),
+                                  ),
+                                  for (final p in profiles)
+                                    ListTile(
+                                      title: Text(p.name),
+                                      onTap: () => Navigator.pop(context, p),
+                                    ),
+                                ],
+                              ),
+                            );
+                            if (picked != null) {
+                              setState(() => selectedProfile = picked);
+                              await widget.store.prefs.setString(
+                                'last_sticker_profile',
+                                picked.id,
+                              );
+                            }
+                          },
+                  ),
+                  const SizedBox(width: 6),
+                  GlassIcon(
+                    Icons.person_add_alt_1_rounded,
+                    tooltip: '创建表情角色',
+                    onTap: busy
+                        ? null
+                        : () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => StickerCharacterCreatorScreen(
+                                store: widget.store,
+                                api: widget.api,
+                              ),
+                            ),
+                          ),
+                  ),
+                  const SizedBox(width: 8),
+                  GlassIcon(
+                    Icons.arrow_back_rounded,
+                    tooltip: '返回',
+                    onTap: () => Navigator.pop(context),
+                  ),
+                ],
               ),
             ),
             Glass(
@@ -160,9 +260,9 @@ ${text.text.trim()}''',
                     ),
                   ),
                   const SizedBox(width: 14),
-                  const Expanded(
+                  Expanded(
                     child: Text(
-                      '''大肥鱼娘
+                      '''${selectedProfile?.name ?? '大肥鱼娘'}
 固定角色参考''',
                       style: TextStyle(
                         fontSize: 16,
@@ -220,7 +320,7 @@ ${text.text.trim()}''',
                   vertical: 11,
                 ),
                 child: Text(
-                  '固定 8 帧 · 每帧 200 ms · smooth motion · consistent character',
+                  '固定 8 帧 · 每帧 150 ms · smooth motion · consistent character · 帧间一致性',
                   style: TextStyle(
                     fontSize: 12,
                     color: muted(context),
@@ -235,7 +335,7 @@ ${text.text.trim()}''',
                 title: animated ? 'DeepSeek 动图ing' : 'DeepSeek 表情包ing',
                 stage: stage,
                 progress: progress,
-                seconds: 0,
+                seconds: seconds,
                 onCancel: () => token?.cancel(),
               ),
             ],
@@ -246,25 +346,6 @@ ${text.text.trim()}''',
                 '生成表情包',
                 icon: Icons.auto_awesome_rounded,
                 onTap: busy ? null : generate,
-              ),
-            ),
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: GlassButton(
-                '创建其他表情角色',
-                icon: Icons.person_add_alt_1_rounded,
-                onTap: busy
-                    ? null
-                    : () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => StickerCharacterCreatorScreen(
-                            store: widget.store,
-                            api: widget.api,
-                          ),
-                        ),
-                      ),
               ),
             ),
           ],

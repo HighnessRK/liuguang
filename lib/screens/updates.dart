@@ -48,6 +48,7 @@ class _UpdatesScreenState extends State<UpdatesScreen> {
   bool checking = false;
   ReleaseInfo? release;
   String? message;
+  String? downloadedPath;
   Future<void> check() async {
     setState(() {
       checking = true;
@@ -178,6 +179,7 @@ class _ReleaseCardState extends State<ReleaseCard> {
   CancelToken? token;
   int received = 0, total = 0;
   String? message;
+  String? downloadedPath;
   @override
   void dispose() {
     token?.cancel();
@@ -192,15 +194,23 @@ class _ReleaseCardState extends State<ReleaseCard> {
       total = 0;
     });
     try {
-      await widget.service.downloadAndInstall(widget.release, token!, (r, t) {
-        if (mounted) {
-          setState(() {
-            received = r;
-            total = t;
-          });
-        }
-      });
-      if (mounted) setState(() => message = '已调起系统安装器');
+      final path = await widget.service.downloadAndInstall(
+        widget.release,
+        token!,
+        (r, t) {
+          if (mounted) {
+            setState(() {
+              received = r;
+              total = t;
+            });
+          }
+        },
+      );
+      if (mounted)
+        setState(() {
+          downloadedPath = path;
+          message = '下载完成，可前往安装';
+        });
     } catch (e) {
       if (mounted) {
         setState(
@@ -229,10 +239,15 @@ class _ReleaseCardState extends State<ReleaseCard> {
           style: TextStyle(fontSize: 12, color: muted(context)),
         ),
         const SizedBox(height: 18),
-        ReleaseNotesView(
-          notes: compareVersions(widget.release.version, appVersion) == 0
-              ? releaseNotes
-              : widget.release.notes,
+        SizedBox(
+          height: 220,
+          child: SingleChildScrollView(
+            child: ReleaseNotesView(
+              notes: compareVersions(widget.release.version, appVersion) == 0
+                  ? releaseNotes
+                  : widget.release.notes,
+            ),
+          ),
         ),
         const SizedBox(height: 16),
         if (token != null) ...[
@@ -241,7 +256,21 @@ class _ReleaseCardState extends State<ReleaseCard> {
             '${(received / 1048576).toStringAsFixed(1)} MB${total > 0 ? ' / ${(total / 1048576).toStringAsFixed(1)} MB' : ''}',
           ),
           GlassButton('取消下载', onTap: () => token?.cancel()),
-        ] else if (widget.release.apk != null)
+        ] else if (downloadedPath != null)
+          GlassButton(
+            '去安装',
+            primary: true,
+            icon: Icons.install_mobile_rounded,
+            onTap: () async {
+              try {
+                await widget.service.installDownloaded(downloadedPath!);
+                if (mounted) setState(() => message = '已打开系统安装页面');
+              } catch (_) {
+                if (mounted) setState(() => message = '安装包不存在，请重新下载');
+              }
+            },
+          )
+        else if (widget.release.apk != null)
           GlassButton(
             '下载并安装',
             primary: true,
@@ -276,6 +305,7 @@ class _VersionLogState extends State<VersionLog> {
     children: [
       for (final entry in [
         (appVersion, releaseNotes, '2026-11-19'),
+        ('1.0.9', '修复：恢复历史作品与请求明细，新增自定义表情角色创建和 GIF 参数校验。', '2026-11-19'),
         ('1.0.8', releaseNotesV108, '2026-11-19'),
         ('1.0.7', releaseNotesV107, '2026-11-19'),
         ('1.0.6', releaseNotesV106, '2026-11-18'),

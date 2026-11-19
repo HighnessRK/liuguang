@@ -6,11 +6,15 @@ import 'package:flutter/services.dart';
 
 import 'store.dart';
 
-const appVersion = '1.0.9';
-const releaseNotes = '''修复：恢复 V1.0.7 之前保存在应用 files/studio 目录中的作品、请求明细和历史消息。
-修复：放宽 GIF 专业参数校验，支持 frame_count 2–16、frame_duration_ms 20–2000，并固定表情包为 8 帧 / 200ms。
-新增：创建其他表情角色，上传三视图和基本描述后由对话模型整理角色设定。
-新增：自定义角色可像大肥鱼娘一样输入表情文本生成静态或动图表情包。''';
+const appVersion = '1.1.0';
+const releaseNotes = '''新增：表情包动图固定输出 GIF、512 × 512、8 帧、每帧 150 ms，并加入 smooth motion、consistent character 与帧间一致性约束。
+新增：存储管理支持查看、批量删除和安装已下载的更新安装包。
+新增：作品隐藏空间，支持长按批量移入和还原，并保留原生成时间顺序。
+新增：表情包角色创建支持从作品添加三视图、识图自动生成描述和角色切换。
+修复：普通生图数量始终默认为 1，避免服务端误生成多张。
+修复：更新弹窗日志始终显示当前版本，下载完成后改为“去安装”并进入安装页面。
+优化：更新日志滚动区域独立滚动，下载进度不再被长日志遮挡。
+优化：动态极光任务卡的光效、计时和取消按钮可读性。''';
 const releaseNotesV108 =
     '''修复：解决小米设备冷启动时 path_provider JNI Context 查找失败导致应用无法进入首页的问题。
 新增：创作页将 DeepSeek 表情包入口与文生图、图生图并列，入口更易发现。
@@ -223,7 +227,7 @@ class UpdateService {
     }
   }
 
-  Future<void> downloadAndInstall(
+  Future<String> downloadAndInstall(
     ReleaseInfo info,
     CancelToken cancel,
     void Function(int, int) progress,
@@ -232,8 +236,13 @@ class UpdateService {
     if (uri == null || uri.scheme != 'https' || uri.userInfo.isNotEmpty) {
       throw StateError('此版本没有可用的 HTTPS 安装包附件');
     }
-    final dir = await safeTemporaryDirectory();
-    final path = '${dir.path}/liuguang-update.apk';
+    final dir = Directory('${store.directory.path}/packages');
+    await dir.create(recursive: true);
+    final safeVersion = info.version.replaceAll(
+      RegExp(r'[^0-9A-Za-z._-]'),
+      '_',
+    );
+    final path = '${dir.path}/liuguang-$safeVersion.apk';
     final partial = '$path.part';
     await AppLog.record('update_download_start');
     try {
@@ -254,13 +263,20 @@ class UpdateService {
           await downloaded.length() != info.size) {
         throw StateError('安装包长度校验失败');
       }
+      if (await File(path).exists()) await File(path).delete();
       await downloaded.rename(path);
       await AppLog.record('update_download_complete');
-      await channel.invokeMethod('installUpdate', {'path': path});
+      return path;
     } catch (_) {
       if (await File(partial).exists()) await File(partial).delete();
       await AppLog.record('update_install_or_download_failure');
       rethrow;
     }
+  }
+
+  Future<void> installDownloaded(String path) async {
+    final file = File(path);
+    if (!await file.exists()) throw StateError('安装包不存在或已被删除');
+    await channel.invokeMethod('installUpdate', {'path': file.path});
   }
 }

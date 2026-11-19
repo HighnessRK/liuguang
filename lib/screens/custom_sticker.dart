@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -22,6 +23,12 @@ class StickerProfile {
     required this.description,
     required this.references,
   });
+  factory StickerProfile.fromJson(Map<String, dynamic> j) => StickerProfile(
+    id: j['id']?.toString() ?? '',
+    name: j['name']?.toString() ?? '我的表情角色',
+    description: j['description']?.toString() ?? '',
+    references: List<String>.from(j['references'] ?? const []),
+  );
   Map<String, dynamic> toJson() => {
     'id': id,
     'name': name,
@@ -58,13 +65,122 @@ class _StickerCharacterCreatorScreenState
   }
 
   Future<void> pickReferences() async {
-    final files = await ImagePicker().pickMultiImage(limit: 3);
-    if (!mounted || files.isEmpty) return;
-    setState(() {
-      references
+    if (name.text.trim().isEmpty) {
+      toast(context, '请先填写角色名称，再添加三视图');
+      return;
+    }
+    final source = await glassSheet<String>(
+      context,
+      Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            '添加角色三视图',
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 16),
+          GlassButton(
+            '从相册选择',
+            icon: Icons.photo_library_outlined,
+            onTap: () => Navigator.pop(context, 'album'),
+          ),
+          const SizedBox(height: 10),
+          GlassButton(
+            '从作品选择',
+            icon: Icons.collections_outlined,
+            onTap: () => Navigator.pop(context, 'works'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || source == null) return;
+    List<String> paths;
+    if (source == 'album') {
+      paths = (await ImagePicker().pickMultiImage(limit: 3))
+          .take(3)
+          .map((f) => f.path)
+          .toList();
+    } else {
+      final chosen = <String>{};
+      final result = await glassSheet<List<String>>(
+        context,
+        StatefulBuilder(
+          builder: (ctx, update) => Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                '选择作品中的三视图',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 12),
+              for (final art in widget.store.artworks.take(12))
+                ListTile(
+                  leading: Image.file(
+                    File(art.path),
+                    width: 48,
+                    height: 48,
+                    fit: BoxFit.cover,
+                  ),
+                  title: Text(art.kind),
+                  trailing: Checkbox(
+                    value: chosen.contains(art.path),
+                    onChanged: (_) {
+                      if (chosen.contains(art.path))
+                        chosen.remove(art.path);
+                      else if (chosen.length < 3)
+                        chosen.add(art.path);
+                      update(() {});
+                    },
+                  ),
+                  onTap: () {
+                    if (chosen.contains(art.path))
+                      chosen.remove(art.path);
+                    else if (chosen.length < 3)
+                      chosen.add(art.path);
+                    update(() {});
+                  },
+                ),
+              GlassButton(
+                '完成选择',
+                primary: true,
+                onTap: () => Navigator.pop(ctx, chosen.toList()),
+              ),
+            ],
+          ),
+        ),
+      );
+      paths = result ?? [];
+    }
+    if (!mounted || paths.isEmpty) return;
+    setState(
+      () => references
         ..clear()
-        ..addAll(files.take(3).map((f) => f.path));
-    });
+        ..addAll(paths),
+    );
+    await generateDescriptionFromReferences();
+  }
+
+  Future<void> generateDescriptionFromReferences() async {
+    if (references.isEmpty) return;
+    setState(() => polishing = true);
+    try {
+      final visual = await widget.api.imageBrief(
+        references,
+        '识别角色三视图并整理稳定的外观、服饰、发型、配色、配件和不可改变特征。',
+      );
+      final result = await widget.api.chat([
+        ChatMessage('user', '''请根据角色名称和三视图分析，生成可重复制作表情包的基本角色描述。
+角色名称：${name.text.trim()}
+三视图分析：$visual
+要求：保留角色身份与关键外观；允许添加适合的道具来最大程度展现表情包；只输出描述正文。'''),
+      ]);
+      if (mounted) description.text = result.trim();
+    } catch (e) {
+      if (mounted) toast(context, describeError(e));
+    } finally {
+      if (mounted) setState(() => polishing = false);
+    }
   }
 
   Future<void> polishDescription() async {
@@ -86,7 +202,7 @@ class _StickerCharacterCreatorScreenState
 角色名：${name.text.trim()}
 用户描述：${description.text.trim()}
 三视图分析：$visual
-只输出角色设定正文，不要解释，不要生成表情文字。'''),
+允许添加适合的道具来最大程度展现表情包。只输出角色设定正文，不要解释，不要生成表情文字。'''),
       ]);
       if (mounted) description.text = result.trim();
     } catch (e) {
@@ -115,6 +231,7 @@ class _StickerCharacterCreatorScreenState
     final all = widget.store.prefs.getStringList('sticker_profiles') ?? [];
     all.add(jsonEncode(profile.toJson()));
     await widget.store.prefs.setStringList('sticker_profiles', all);
+    await widget.store.prefs.setString('last_sticker_profile', profile.id);
     if (mounted) {
       Navigator.pushReplacement(
         context,
@@ -192,12 +309,13 @@ class _StickerCharacterCreatorScreenState
               minLines: 4,
               maxLines: 8,
             ),
+            const SizedBox(height: 16),
             if (polishing)
               const AuroraBusyButton()
             else
               GlassButton(
                 '智能润色描述',
-                icon: Icons.auto_awesome_rounded,
+                icon: Icons.edit_note_rounded,
                 onTap: polishDescription,
               ),
             const SizedBox(height: 12),
@@ -205,7 +323,7 @@ class _StickerCharacterCreatorScreenState
               width: double.infinity,
               child: GlassButton(
                 '保存并开始制作',
-                icon: Icons.auto_awesome_rounded,
+                icon: Icons.save_rounded,
                 onTap: saving ? null : save,
               ),
             ),
@@ -236,12 +354,15 @@ class _CustomStickerGeneratorScreenState
   final text = TextEditingController();
   bool animated = false, busy = false;
   double progress = 0;
+  int seconds = 0;
+  Timer? timer;
   String stage = '等待生成';
   CancelToken? token;
 
   @override
   void dispose() {
     token?.cancel();
+    timer?.cancel();
     text.dispose();
     super.dispose();
   }
@@ -275,12 +396,12 @@ class _CustomStickerGeneratorScreenState
               height: 512,
               format: 'gif',
               quality: 'high',
-              advanced: {'frame_count': 8, 'frame_duration_ms': 200},
+              advanced: {'frame_count': 8, 'frame_duration_ms': 150},
             )
           : GenerationOptions(
               width: 4096,
               height: 4096,
-              format: 'png',
+              format: 'jpeg',
               quality: 'high',
             );
       final reply = await widget.api.generate(
@@ -288,7 +409,7 @@ class _CustomStickerGeneratorScreenState
             '''$brief
 角色设定：${widget.profile.description}
 画面文字：${text.text.trim()}
-保持 consistent character，smooth motion，画面铺满画布，不要白边。''',
+保持 consistent character，smooth motion，帧间一致性约束，画面铺满画布，不要白边。''',
         options: options,
         inputs: widget.profile.references,
         cancelToken: token,
@@ -308,12 +429,17 @@ class _CustomStickerGeneratorScreenState
           prompt: text.text.trim(),
           model: widget.store.imageApi.model,
           kind: '${widget.profile.name}${animated ? ' 动图表情包' : ' 表情包'}',
+          format: animated ? 'gif' : 'jpeg',
         );
       }
-      if (mounted) toast(context, '已保存到作品');
+      if (mounted) {
+        toast(context, '已保存到作品');
+        Navigator.of(context).popUntil((route) => route.isFirst);
+      }
     } catch (e) {
       if (mounted) toast(context, describeError(e));
     } finally {
+      timer?.cancel();
       if (mounted) setState(() => busy = false);
     }
   }
@@ -358,7 +484,7 @@ class _CustomStickerGeneratorScreenState
             if (animated)
               Glass(
                 child: Text(
-                  '固定 8 帧 · 每帧 200 ms · smooth motion · consistent character',
+                  '固定 8 帧 · 每帧 150 ms · smooth motion · consistent character · 帧间一致性',
                   style: TextStyle(color: muted(context), height: 1.5),
                 ),
               ),
@@ -370,7 +496,7 @@ class _CustomStickerGeneratorScreenState
                     : '${widget.profile.name} 表情包ing',
                 stage: stage,
                 progress: progress,
-                seconds: 0,
+                seconds: seconds,
                 onCancel: () => token?.cancel(),
               ),
             ],

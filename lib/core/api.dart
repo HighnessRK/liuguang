@@ -423,8 +423,11 @@ class StudioApi {
       if (images.isEmpty) {
         throw StudioException('接口没有返回图片，可能选择了对话模型或错误的图片协议');
       }
-      count = images.length;
-      return ImageReply(images);
+      final limited = options.count > 0
+          ? images.take(options.count).toList()
+          : images;
+      count = limited.length;
+      return ImageReply(limited);
     } catch (e) {
       failure = describeError(e);
       throw StudioException(failure);

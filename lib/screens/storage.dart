@@ -9,6 +9,7 @@ import '../core/models.dart';
 import '../core/store.dart';
 import '../ui/glass.dart';
 import 'settings.dart';
+import '../core/updates.dart';
 
 class StorageSettings extends StatefulWidget {
   final AppStore store;
@@ -19,6 +20,8 @@ class StorageSettings extends StatefulWidget {
 
 class _StorageSettingsState extends State<StorageSettings> {
   int total = 0, works = 0, cache = 0, done = 0;
+  final packages = <File>[];
+  final selectedPackages = <String>{};
   bool busy = false, optimizing = false;
   late int quality = (widget.store.prefs.getInt('storage_quality') ?? 88).clamp(
     60,
@@ -38,6 +41,8 @@ class _StorageSettingsState extends State<StorageSettings> {
         .toSet();
     var t = 0, w = 0, c = 0;
     disposable.clear();
+    packages.clear();
+    selectedPackages.clear();
     try {
       await for (final entity in widget.store.directory.list(
         recursive: true,
@@ -46,6 +51,10 @@ class _StorageSettingsState extends State<StorageSettings> {
         if (entity is! File) continue;
         final size = await entity.length();
         t += size;
+        if (entity.path.toLowerCase().endsWith('.apk') &&
+            entity.path.contains('packages')) {
+          packages.add(entity);
+        }
         if (retained.contains(entity.absolute.path)) {
           w += size;
         } else if (entity.path.contains('share_cache') ||
@@ -253,6 +262,83 @@ class _StorageSettingsState extends State<StorageSettings> {
                 await scan();
               },
       ),
+      const SectionLabel('安装包管理'),
+      if (packages.isEmpty)
+        Text(
+          '暂无已下载的更新安装包',
+          style: TextStyle(color: muted(context), fontSize: 12),
+        ),
+      if (packages.isNotEmpty)
+        Glass(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          child: Column(
+            children: [
+              for (final file in packages)
+                CheckboxListTile(
+                  dense: true,
+                  value: selectedPackages.contains(file.path),
+                  onChanged: (v) => setState(
+                    () => v == true
+                        ? selectedPackages.add(file.path)
+                        : selectedPackages.remove(file.path),
+                  ),
+                  title: Text(
+                    file.uri.pathSegments.last,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  subtitle: FutureBuilder<int>(
+                    future: file.length(),
+                    builder: (_, snap) =>
+                        Text(snap.hasData ? mb(snap.data!) : '读取中'),
+                  ),
+                  secondary: IconButton(
+                    tooltip: '安装',
+                    icon: const Icon(Icons.install_mobile_rounded),
+                    onPressed: () async {
+                      try {
+                        await UpdateService(widget.store)
+                            .installDownloaded(file.path);
+                      } catch (e) {
+                        if (mounted) toast(context, '安装包不存在或无法打开');
+                      }
+                    },
+                  ),
+                ),
+              Row(
+                children: [
+                  Expanded(
+                    child: GlassButton(
+                      '全选',
+                      small: true,
+                      onTap: () => setState(
+                        () => selectedPackages.addAll(
+                          packages.map((f) => f.path),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: GlassButton(
+                      '删除所选',
+                      small: true,
+                      onTap: selectedPackages.isEmpty
+                          ? null
+                          : () async {
+                              for (final path in selectedPackages.toList()) {
+                                final f = File(path);
+                                if (await f.exists()) await f.delete();
+                              }
+                              await scan();
+                            },
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
       const SectionLabel('作品体积优化'),
       Glass(
         padding: const EdgeInsets.all(16),

@@ -36,7 +36,9 @@ class _LibraryScreenState extends State<LibraryScreen>
   final selected = <String>{};
   final toolbarKey = GlobalKey();
   int filter = 0;
+  bool hiddenSpace = false;
   String query = '';
+  double overscroll = 0;
   final search = TextEditingController();
   late final selectionAnimation = AnimationController(
     vsync: this,
@@ -87,316 +89,355 @@ class _LibraryScreenState extends State<LibraryScreen>
     final items = widget.store.artworks
         .where(
           (a) =>
+              (a.hidden == hiddenSpace) &&
               (filter != 1 || a.favorite) &&
               (filter != 2 || a.path.endsWith('.gif')) &&
               (a.prompt.toLowerCase().contains(query.toLowerCase()) ||
                   a.kind.contains(query)),
         )
         .toList();
-    return CustomScrollView(
-      slivers: [
-        SliverPadding(
-          padding: const EdgeInsets.fromLTRB(22, 5, 22, 0),
-          sliver: SliverToBoxAdapter(
-            child: Column(
-              children: [
-                PageHeader(
-                  title: '作品',
-                  action: GlassIcon(
-                    Icons.gif_box_outlined,
-                    tooltip: '原生 GIF 创作',
-                    onTap: () {
-                      if (!supportsNativeGif(widget.store.imageApi.model)) {
-                        toast(context, '当前模型暂不支持 GIF');
-                        return;
-                      }
-                      widget.onGif?.call();
-                    },
-                  ),
-                ),
-                GlassField(
-                  controller: search,
-                  hint: '搜索作品',
-                  onChanged: (v) => setState(() => query = v),
-                  suffix: const Icon(Icons.search_rounded, size: 20),
-                ),
-                const SizedBox(height: 16),
-                GlassSegments(
-                  labels: const ['全部作品', '收藏', 'GIF'],
-                  selected: filter,
-                  onChanged: (i) => setState(() => filter = i),
-                ),
-                SectionLabel(
-                  selected.isEmpty
-                      ? '${items.length} 件作品'
-                      : '已选 ${selected.length} 件',
-                ),
-                AnimatedBuilder(
-                  key: toolbarKey,
-                  animation: selectionAnimation,
-                  builder: (_, child) => Offstage(
-                    offstage: selectionAnimation.isDismissed,
-                    child: IgnorePointer(
-                      ignoring: selected.isEmpty,
-                      child: child,
+    return NotificationListener<ScrollNotification>(
+      onNotification: (notification) {
+        if (notification is OverscrollNotification &&
+            notification.overscroll < -18) {
+          overscroll += -notification.overscroll;
+          if (overscroll > 80) {
+            overscroll = 0;
+            setState(() => hiddenSpace = true);
+          }
+        } else if (notification is ScrollEndNotification) {
+          overscroll = 0;
+        }
+        return false;
+      },
+      child: CustomScrollView(
+        slivers: [
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(22, 5, 22, 0),
+            sliver: SliverToBoxAdapter(
+              child: Column(
+                children: [
+                  PageHeader(
+                    title: hiddenSpace ? '隐藏空间' : '作品',
+                    action: GlassIcon(
+                      Icons.gif_box_outlined,
+                      tooltip: '原生 GIF 创作',
+                      onTap: () {
+                        if (!supportsNativeGif(widget.store.imageApi.model)) {
+                          toast(context, '当前模型暂不支持 GIF');
+                          return;
+                        }
+                        widget.onGif?.call();
+                      },
                     ),
                   ),
-                  child: SizeTransition(
-                    key: const ValueKey('artwork-selection-toolbar'),
-                    sizeFactor: selectionCurve,
-                    alignment: Alignment.topCenter,
-                    child: FadeTransition(
-                      opacity: selectionCurve,
-                      child: Padding(
-                        padding: const EdgeInsets.only(bottom: 20),
-                        child: Wrap(
-                          spacing: 8,
-                          runSpacing: 10,
-                          children: [
-                            GlassButton(
-                              '分享图',
-                              small: true,
-                              onTap: () => shareArtworkCards(
-                                context,
-                                widget.store,
-                                widget.store.artworks
-                                    .where((a) => selected.contains(a.id))
-                                    .toList(),
-                              ),
-                            ),
-                            GlassButton(
-                              '全选',
-                              small: true,
-                              onTap: () => updateSelection(
-                                () => selected.addAll(items.map((a) => a.id)),
-                              ),
-                            ),
-                            GlassButton(
-                              '取消',
-                              small: true,
-                              onTap: () =>
-                                  updateSelection(() => selected.clear()),
-                            ),
-                            GlassButton(
-                              '删除所选',
-                              small: true,
-                              onTap: () async {
-                                if (!await confirm(
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: GlassIcon(
+                      hiddenSpace
+                          ? Icons.lock_open_rounded
+                          : Icons.lock_outline_rounded,
+                      tooltip: hiddenSpace ? '返回普通空间' : '打开隐藏空间',
+                      onTap: () => setState(() => hiddenSpace = !hiddenSpace),
+                    ),
+                  ),
+                  GlassField(
+                    controller: search,
+                    hint: '搜索作品',
+                    onChanged: (v) => setState(() => query = v),
+                    suffix: const Icon(Icons.search_rounded, size: 20),
+                  ),
+                  const SizedBox(height: 16),
+                  GlassSegments(
+                    labels: const ['全部作品', '收藏', 'GIF'],
+                    selected: filter,
+                    onChanged: (i) => setState(() => filter = i),
+                  ),
+                  SectionLabel(
+                    selected.isEmpty
+                        ? '${items.length} 件作品'
+                        : '已选 ${selected.length} 件',
+                  ),
+                  AnimatedBuilder(
+                    key: toolbarKey,
+                    animation: selectionAnimation,
+                    builder: (_, child) => Offstage(
+                      offstage: selectionAnimation.isDismissed,
+                      child: IgnorePointer(
+                        ignoring: selected.isEmpty,
+                        child: child,
+                      ),
+                    ),
+                    child: SizeTransition(
+                      key: const ValueKey('artwork-selection-toolbar'),
+                      sizeFactor: selectionCurve,
+                      alignment: Alignment.topCenter,
+                      child: FadeTransition(
+                        opacity: selectionCurve,
+                        child: Padding(
+                          padding: const EdgeInsets.only(bottom: 20),
+                          child: Wrap(
+                            spacing: 8,
+                            runSpacing: 10,
+                            children: [
+                              GlassButton(
+                                '分享图',
+                                small: true,
+                                onTap: () => shareArtworkCards(
                                   context,
-                                  '删除 ${selected.length} 件作品？',
-                                  '仅删除应用内副本，相册照片保留。',
-                                )) {
-                                  return;
-                                }
-                                for (final art
-                                    in widget.store.artworks
-                                        .where((a) => selected.contains(a.id))
-                                        .toList()) {
-                                  await widget.store.removeArtwork(art);
-                                }
-                                if (mounted) {
-                                  updateSelection(() => selected.clear());
-                                }
-                              },
-                            ),
-                          ],
+                                  widget.store,
+                                  widget.store.artworks
+                                      .where((a) => selected.contains(a.id))
+                                      .toList(),
+                                ),
+                              ),
+                              GlassButton(
+                                '全选',
+                                small: true,
+                                onTap: () => updateSelection(
+                                  () => selected.addAll(items.map((a) => a.id)),
+                                ),
+                              ),
+                              GlassButton(
+                                '取消',
+                                small: true,
+                                onTap: () =>
+                                    updateSelection(() => selected.clear()),
+                              ),
+                              GlassButton(
+                                hiddenSpace ? '还原到普通空间' : '移入隐藏空间',
+                                small: true,
+                                onTap: () async {
+                                  await widget.store.setArtworkHidden(
+                                    selected,
+                                    !hiddenSpace,
+                                  );
+                                  if (mounted)
+                                    updateSelection(() => selected.clear());
+                                },
+                              ),
+                              GlassButton(
+                                '删除所选',
+                                small: true,
+                                onTap: () async {
+                                  if (!await confirm(
+                                    context,
+                                    '删除 ${selected.length} 件作品？',
+                                    '仅删除应用内副本，相册照片保留。',
+                                  )) {
+                                    return;
+                                  }
+                                  for (final art
+                                      in widget.store.artworks
+                                          .where((a) => selected.contains(a.id))
+                                          .toList()) {
+                                    await widget.store.removeArtwork(art);
+                                  }
+                                  if (mounted) {
+                                    updateSelection(() => selected.clear());
+                                  }
+                                },
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
-        ),
-        if (items.isEmpty)
-          SliverToBoxAdapter(
-            child: EmptyState(
-              icon: Icons.collections_outlined,
-              title: filter == 1 ? '把喜欢，留在这里' : '暂无作品',
-              subtitle: '生成与导出的照片会保存在这里。\n也可以导入照片，开始下一次创作。',
-              action: GlassButton(
-                '导入照片',
-                icon: Icons.add_rounded,
-                onTap: () async {
-                  try {
-                    final file = await ImagePicker().pickImage(
-                      source: ImageSource.gallery,
-                    );
-                    if (file != null) {
-                      final art = await saveArtwork(
-                        widget.store,
-                        await file.readAsBytes(),
-                        prompt: '导入的照片',
-                        model: '本地',
-                        kind: '导入',
+          if (items.isEmpty)
+            SliverToBoxAdapter(
+              child: EmptyState(
+                icon: Icons.collections_outlined,
+                title: filter == 1 ? '把喜欢，留在这里' : '暂无作品',
+                subtitle: '生成与导出的照片会保存在这里。\n也可以导入照片，开始下一次创作。',
+                action: GlassButton(
+                  '导入照片',
+                  icon: Icons.add_rounded,
+                  onTap: () async {
+                    try {
+                      final file = await ImagePicker().pickImage(
+                        source: ImageSource.gallery,
                       );
-                      if (mounted) {
-                        widget.onEdit(art.path);
+                      if (file != null) {
+                        final art = await saveArtwork(
+                          widget.store,
+                          await file.readAsBytes(),
+                          prompt: '导入的照片',
+                          model: '本地',
+                          kind: '导入',
+                        );
+                        if (mounted) {
+                          widget.onEdit(art.path);
+                        }
+                      }
+                    } catch (e) {
+                      if (context.mounted) {
+                        toast(context, describeError(e));
                       }
                     }
-                  } catch (e) {
-                    if (context.mounted) {
-                      toast(context, describeError(e));
-                    }
-                  }
-                },
-              ),
-            ),
-          )
-        else
-          SliverPadding(
-            padding: const EdgeInsets.symmetric(horizontal: 22),
-            sliver: SliverGrid(
-              delegate: SliverChildBuilderDelegate((context, i) {
-                final art = items[i];
-                return GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onLongPress: () => updateSelection(
-                    () => selected.add(art.id),
-                    longPress: true,
-                  ),
-                  onTap: () {
-                    if (selected.isNotEmpty) {
-                      updateSelection(() {
-                        if (!selected.add(art.id)) selected.remove(art.id);
-                      });
-                      return;
-                    }
-                    openArtwork(
-                      context,
-                      widget.store,
-                      art,
-                      widget.onEdit,
-                      onReuse: widget.onReuse,
-                    );
                   },
-                  child: Glass(
-                    padding: EdgeInsets.zero,
-                    radius: 22,
-                    blur: false,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Expanded(
-                          child: Stack(
-                            fit: StackFit.expand,
-                            children: [
-                              Image.file(
-                                File(art.path),
-                                fit: BoxFit.cover,
-                                cacheWidth: 600,
-                                errorBuilder: (_, _, _) => const Center(
-                                  child: Icon(Icons.broken_image_outlined),
-                                ),
-                              ),
-                              if (selected.contains(art.id))
-                                Positioned(
-                                  left: 10,
-                                  top: 10,
-                                  child: Semantics(
-                                    label: '已选中',
-                                    selected: true,
-                                    child: Container(
-                                      key: const ValueKey(
-                                        'artwork-selected-check',
-                                      ),
-                                      width: 30,
-                                      height: 30,
-                                      decoration: BoxDecoration(
-                                        color: const Color(0xff16884b),
-                                        shape: BoxShape.circle,
-                                        border: Border.all(
-                                          color: Colors.white,
-                                          width: 2,
-                                        ),
-                                        boxShadow: const [
-                                          BoxShadow(
-                                            color: Color(0x55000000),
-                                            blurRadius: 6,
-                                            offset: Offset(0, 2),
-                                          ),
-                                        ],
-                                      ),
-                                      child: const Icon(
-                                        Icons.check_rounded,
-                                        color: Colors.white,
-                                        size: 22,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              Positioned(
-                                top: 9,
-                                right: 9,
-                                child: GestureDetector(
-                                  behavior: HitTestBehavior.opaque,
-                                  onTap: () async {
-                                    art.favorite = !art.favorite;
-                                    await widget.store.saveCatalog();
-                                  },
-                                  child: Container(
-                                    padding: const EdgeInsets.all(7),
-                                    decoration: const BoxDecoration(
-                                      color: Colors.black38,
-                                      shape: BoxShape.circle,
-                                    ),
-                                    child: Icon(
-                                      art.favorite
-                                          ? Icons.favorite_rounded
-                                          : Icons.favorite_border_rounded,
-                                      size: 16,
-                                      color: Colors.white,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(13, 12, 13, 12),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                art.kind,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                              const SizedBox(height: 5),
-                              Text(
-                                '${art.width} × ${art.height}',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: muted(context),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
+                ),
+              ),
+            )
+          else
+            SliverPadding(
+              padding: const EdgeInsets.symmetric(horizontal: 22),
+              sliver: SliverGrid(
+                delegate: SliverChildBuilderDelegate((context, i) {
+                  final art = items[i];
+                  return GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onLongPress: () => updateSelection(
+                      () => selected.add(art.id),
+                      longPress: true,
                     ),
-                  ),
-                );
-              }, childCount: items.length),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                crossAxisSpacing: 12,
-                mainAxisSpacing: 15,
-                childAspectRatio: .76,
+                    onTap: () {
+                      if (selected.isNotEmpty) {
+                        updateSelection(() {
+                          if (!selected.add(art.id)) selected.remove(art.id);
+                        });
+                        return;
+                      }
+                      openArtwork(
+                        context,
+                        widget.store,
+                        art,
+                        widget.onEdit,
+                        onReuse: widget.onReuse,
+                      );
+                    },
+                    child: Glass(
+                      padding: EdgeInsets.zero,
+                      radius: 22,
+                      blur: false,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Expanded(
+                            child: Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                Image.file(
+                                  File(art.path),
+                                  fit: BoxFit.cover,
+                                  cacheWidth: 600,
+                                  errorBuilder: (_, _, _) => const Center(
+                                    child: Icon(Icons.broken_image_outlined),
+                                  ),
+                                ),
+                                if (selected.contains(art.id))
+                                  Positioned(
+                                    left: 10,
+                                    top: 10,
+                                    child: Semantics(
+                                      label: '已选中',
+                                      selected: true,
+                                      child: Container(
+                                        key: const ValueKey(
+                                          'artwork-selected-check',
+                                        ),
+                                        width: 30,
+                                        height: 30,
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xff16884b),
+                                          shape: BoxShape.circle,
+                                          border: Border.all(
+                                            color: Colors.white,
+                                            width: 2,
+                                          ),
+                                          boxShadow: const [
+                                            BoxShadow(
+                                              color: Color(0x55000000),
+                                              blurRadius: 6,
+                                              offset: Offset(0, 2),
+                                            ),
+                                          ],
+                                        ),
+                                        child: const Icon(
+                                          Icons.check_rounded,
+                                          color: Colors.white,
+                                          size: 22,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                Positioned(
+                                  top: 9,
+                                  right: 9,
+                                  child: GestureDetector(
+                                    behavior: HitTestBehavior.opaque,
+                                    onTap: () async {
+                                      art.favorite = !art.favorite;
+                                      await widget.store.saveCatalog();
+                                    },
+                                    child: Container(
+                                      padding: const EdgeInsets.all(7),
+                                      decoration: const BoxDecoration(
+                                        color: Colors.black38,
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: Icon(
+                                        art.favorite
+                                            ? Icons.favorite_rounded
+                                            : Icons.favorite_border_rounded,
+                                        size: 16,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(13, 12, 13, 12),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  art.kind,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                                const SizedBox(height: 5),
+                                Text(
+                                  '${art.width} × ${art.height}',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: muted(context),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }, childCount: items.length),
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 2,
+                  crossAxisSpacing: 12,
+                  mainAxisSpacing: 15,
+                  childAspectRatio: .76,
+                ),
               ),
             ),
+          const SliverToBoxAdapter(child: SizedBox(height: 28)),
+          SliverToBoxAdapter(
+            child: SizedBox(height: StudioTabInset.of(context) + 20),
           ),
-        const SliverToBoxAdapter(child: SizedBox(height: 28)),
-        SliverToBoxAdapter(
-          child: SizedBox(height: StudioTabInset.of(context) + 20),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }

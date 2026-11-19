@@ -1,10 +1,10 @@
 # 琉光 · LIUGUANG
 
-V1.0.9 · Flutter 安卓 AI 影像工作室。Android 10+，ARM64。
+V1.1.0 · Flutter 安卓 AI 影像工作室。Android 10+，ARM64。
 
 [GitHub](https://github.com/HighnessRK/liuguang) · [Gitee](https://gitee.com/highnesssrk/liuguang)
 
-从仓库 Releases 下载 `liuguang-v1.0.9-arm64.apk`，校验文件 `SHA256.txt` 随版本提供。
+从仓库 Releases 下载 `liuguang-v1.1.0-arm64.apk`，校验文件 `SHA256.txt` 随版本提供。
 
 ## 接入模型
 
@@ -139,3 +139,7 @@ APK 安装前验证应用包名、既有发布签名和版本号；下载可取�
 
 
 本轮界面补修：提高深色玻璃按钮与选中工具的可读性；页面进出使用短时绘制缓存；作品多选加入绿色勾选、触感反馈和展开收起动画。减少动态效果设置同时生效，更新日志按实际功能补齐。
+
+## V1.1.0 更新说明
+
+表情包 GIF 参数固定为 512 × 512、8 帧、150 ms；普通生图默认 1 张；更新安装包可在存储管理中查看、安装或批量删除；作品支持隐藏空间；自定义表情角色支持从作品添加三视图和识图生成描述。

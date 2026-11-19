@@ -633,7 +633,12 @@ class _TaskStatusCardState extends State<TaskStatusCard>
           ),
           if (widget.onCancel != null) ...[
             const SizedBox(height: 10),
-            GlassButton('取消任务', small: true, onTap: widget.onCancel),
+            GlassButton(
+              '取消任务',
+              small: true,
+              primary: true,
+              onTap: widget.onCancel,
+            ),
           ],
         ],
       ),

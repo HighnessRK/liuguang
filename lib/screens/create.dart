@@ -584,7 +584,7 @@ class _CreateScreenState extends State<CreateScreen> {
 
         GlassSegments(
           labels: const ['文生图', '图生图', '表情包'],
-          selected: mode.clamp(0, 1),
+          selected: mode.clamp(0, 2),
           onChanged: (v) {
             if (busy) return;
             if (v == 2) {
