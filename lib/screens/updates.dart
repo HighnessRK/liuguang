@@ -229,7 +229,11 @@ class _ReleaseCardState extends State<ReleaseCard> {
           style: TextStyle(fontSize: 12, color: muted(context)),
         ),
         const SizedBox(height: 18),
-        ReleaseNotesView(notes: widget.release.notes),
+        ReleaseNotesView(
+          notes: compareVersions(widget.release.version, appVersion) == 0
+              ? releaseNotes
+              : widget.release.notes,
+        ),
         const SizedBox(height: 16),
         if (token != null) ...[
           LinearProgressIndicator(value: total > 0 ? received / total : null),
@@ -271,7 +275,7 @@ class _VersionLogState extends State<VersionLog> {
   Widget build(BuildContext context) => Column(
     children: [
       for (final entry in [
-        (appVersion, releaseNotes, '2026-11-15'),
+        (appVersion, releaseNotes, '2026-11-19'),
         ('1.0.4', releaseNotesV104, '2026-11-10'),
         ('1.0.3', releaseNotesV103, '2026-11-10'),
         ('1.0.2', releaseNotesV102, '2026-11-10'),

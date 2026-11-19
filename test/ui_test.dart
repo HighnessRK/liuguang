@@ -1041,7 +1041,7 @@ void main() {
       expect(find.text('下载并安装'), findsNothing);
       expect(find.text('V1.0.0 · 2026-11-09'), findsOneWidget);
       service.answer = uc.ReleaseInfo(
-        '1.0.6',
+        '1.0.8',
         '更新',
         'gitee',
         '',

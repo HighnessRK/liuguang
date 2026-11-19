@@ -965,11 +965,14 @@ class _CreateScreenState extends State<CreateScreen> {
       child: Stack(
         fit: StackFit.expand,
         children: [
-          Image.file(
-            File(path),
-            fit: BoxFit.cover,
-            errorBuilder: (_, _, _) =>
-                const Center(child: Icon(Icons.broken_image_outlined)),
+          ZoomableImage(
+            image: FileImage(File(path)),
+            child: Image.file(
+              File(path),
+              fit: BoxFit.cover,
+              errorBuilder: (_, _, _) =>
+                  const Center(child: Icon(Icons.broken_image_outlined)),
+            ),
           ),
           Positioned(
             top: 7,
@@ -1088,9 +1091,20 @@ class _GenerationSettingsState extends State<GenerationSettings> {
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
-      const Text(
-        '生成规格',
-        style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
+      Row(
+        children: [
+          const Expanded(
+            child: Text(
+              '生成规格',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
+            ),
+          ),
+          GlassIcon(
+            Icons.close_rounded,
+            tooltip: '关闭',
+            onTap: () => Navigator.pop(context),
+          ),
+        ],
       ),
       const SectionLabel('画面比例'),
       Wrap(

@@ -34,6 +34,7 @@ class LibraryScreen extends StatefulWidget {
 class _LibraryScreenState extends State<LibraryScreen>
     with SingleTickerProviderStateMixin {
   final selected = <String>{};
+  final toolbarKey = GlobalKey();
   int filter = 0;
   String query = '';
   final search = TextEditingController();
@@ -58,6 +59,17 @@ class _LibraryScreenState extends State<LibraryScreen>
       selectionAnimation.reverse();
     } else {
       selectionAnimation.forward();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final target = toolbarKey.currentContext;
+        if (target != null && mounted) {
+          Scrollable.ensureVisible(
+            target,
+            alignment: .12,
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOutCubic,
+          );
+        }
+      });
     }
   }
 
@@ -120,6 +132,7 @@ class _LibraryScreenState extends State<LibraryScreen>
                       : '已选 ${selected.length} 件',
                 ),
                 AnimatedBuilder(
+                  key: toolbarKey,
                   animation: selectionAnimation,
                   builder: (_, child) => Offstage(
                     offstage: selectionAnimation.isDismissed,

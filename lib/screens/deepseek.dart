@@ -76,7 +76,7 @@ ${text.text.trim()}''',
               format: 'gif',
               quality: 'high',
               count: 1,
-              advanced: {'frame_count': 9, 'frame_duration_ms': 200},
+              advanced: {'frame_count': 8, 'frame_duration_ms': 200},
             )
           : GenerationOptions(
               width: 4096,
@@ -88,7 +88,7 @@ ${text.text.trim()}''',
         prompt:
             '''$brief
 画面文字：${text.text.trim()}
-保持蓝发、女仆装、鱼尾、统一角色设计，画面铺满画布，不要白边。''',
+保持蓝发、女仆装、鱼尾和统一角色设计，保持帧间一致性，smooth motion，consistent character，画面铺满画布，不要白边。''',
         options: options,
         inputs: [path],
         cancelToken: token,
@@ -142,11 +142,21 @@ ${text.text.trim()}''',
                 children: [
                   ClipRRect(
                     borderRadius: BorderRadius.circular(16),
-                    child: Image.asset(
-                      'assets/deepseek/fish_reference.jpg',
-                      width: 120,
-                      height: 120,
-                      fit: BoxFit.cover,
+                    child: SizedBox(
+                      width: 170,
+                      height: 112,
+                      child: ZoomableImage(
+                        image: const AssetImage(
+                          'assets/deepseek/fish_reference.jpg',
+                        ),
+                        child: ColoredBox(
+                          color: Colors.white,
+                          child: Image.asset(
+                            'assets/deepseek/fish_reference.jpg',
+                            fit: BoxFit.contain,
+                          ),
+                        ),
+                      ),
                     ),
                   ),
                   const SizedBox(width: 14),
@@ -194,7 +204,7 @@ ${text.text.trim()}''',
               Padding(
                 padding: const EdgeInsets.only(top: 8),
                 child: Text(
-                  '帧数由对话模型决定，范围 2–16，默认 9；帧间隔范围 20–2000 ms，默认 200 ms。',
+                  '固定 8 帧 · 每帧 200 ms · smooth motion · consistent character',
                   style: TextStyle(fontSize: 12, color: muted(context)),
                 ),
               ),

@@ -108,10 +108,13 @@ class _MaterialPickerState extends State<MaterialPicker> {
                               Expanded(
                                 child: ClipRRect(
                                   borderRadius: BorderRadius.circular(16),
-                                  child: Image.asset(
-                                    m.preview,
-                                    fit: BoxFit.cover,
-                                    filterQuality: FilterQuality.high,
+                                  child: ZoomableImage(
+                                    image: AssetImage(m.preview),
+                                    child: Image.asset(
+                                      m.preview,
+                                      fit: BoxFit.cover,
+                                      filterQuality: FilterQuality.high,
+                                    ),
                                   ),
                                 ),
                               ),
@@ -216,11 +219,14 @@ class MaterialSelection extends StatelessWidget {
                         size: 28,
                       ),
                     )
-                  : Image.asset(
-                      material.preview,
-                      width: 60,
-                      height: 60,
-                      fit: BoxFit.cover,
+                  : ZoomableImage(
+                      image: AssetImage(material.preview),
+                      child: Image.asset(
+                        material.preview,
+                        width: 60,
+                        height: 60,
+                        fit: BoxFit.cover,
+                      ),
                     ),
             ),
             const SizedBox(width: 16),
