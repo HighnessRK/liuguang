@@ -3,7 +3,6 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/services.dart';
-import 'package:path_provider/path_provider.dart';
 
 import '../core/api.dart';
 import '../core/imaging.dart';
@@ -38,7 +37,7 @@ class _DeepSeekStickerScreenState extends State<DeepSeekStickerScreen> {
 
   Future<String> referencePath() async {
     final data = await rootBundle.load('assets/deepseek/fish_reference.jpg');
-    final dir = await getTemporaryDirectory();
+    final dir = await safeTemporaryDirectory();
     final file = File('${dir.path}/deepseek-fish-reference.jpg');
     await file.writeAsBytes(data.buffer.asUint8List());
     return file.path;
@@ -189,25 +188,46 @@ ${text.text.trim()}''',
                   ? (_) {}
                   : (v) => setState(() => animated = v == 1),
             ),
-            Row(
-              children: [
-                const Expanded(child: Text('动图模式')),
-                GlassToggle(
-                  value: animated,
-                  onChanged: busy
-                      ? (_) {}
-                      : (v) => setState(() => animated = v),
-                ),
-              ],
+            const SizedBox(height: 18),
+            Glass(
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+              child: Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      '动图模式',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  GlassToggle(
+                    value: animated,
+                    onChanged: busy
+                        ? (_) {}
+                        : (v) => setState(() => animated = v),
+                  ),
+                ],
+              ),
             ),
-            if (animated)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
+            if (animated) ...[
+              const SizedBox(height: 10),
+              Glass(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 11,
+                ),
                 child: Text(
                   '固定 8 帧 · 每帧 200 ms · smooth motion · consistent character',
-                  style: TextStyle(fontSize: 12, color: muted(context)),
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: muted(context),
+                    height: 1.5,
+                  ),
                 ),
               ),
+            ],
             if (busy) ...[
               const SizedBox(height: 18),
               TaskStatusCard(
@@ -219,11 +239,13 @@ ${text.text.trim()}''',
               ),
             ],
             const SizedBox(height: 18),
-            GlassButton(
-              '生成表情包',
-              primary: true,
-              icon: Icons.auto_awesome_rounded,
-              onTap: busy ? null : generate,
+            SizedBox(
+              width: double.infinity,
+              child: GlassButton(
+                '生成表情包',
+                icon: Icons.auto_awesome_rounded,
+                onTap: busy ? null : generate,
+              ),
             ),
           ],
         ),

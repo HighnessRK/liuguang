@@ -578,32 +578,29 @@ class _CreateScreenState extends State<CreateScreen> {
                   ),
                 ),
               ),
-              const SizedBox(width: 8),
-              GlassIcon(
-                Icons.emoji_emotions_outlined,
-                tooltip: 'DeepSeek 表情包',
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => DeepSeekStickerScreen(
-                      store: widget.store,
-                      api: widget.api,
-                    ),
-                  ),
-                ),
-              ),
             ],
           ),
         ),
 
         GlassSegments(
-          labels: const ['文生图', '图生图'],
-          selected: mode,
+          labels: const ['文生图', '图生图', '表情包'],
+          selected: mode.clamp(0, 1),
           onChanged: (v) {
-            if (!busy) {
-              setState(() => mode = v);
-              widget.store.prefs.setInt('creation_mode', v);
+            if (busy) return;
+            if (v == 2) {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => DeepSeekStickerScreen(
+                    store: widget.store,
+                    api: widget.api,
+                  ),
+                ),
+              );
+              return;
             }
+            setState(() => mode = v);
+            widget.store.prefs.setInt('creation_mode', v);
           },
         ),
         const SizedBox(height: 16),

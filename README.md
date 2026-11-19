@@ -1,10 +1,10 @@
 # 琉光 · LIUGUANG
 
-V1.0.7 · Flutter 安卓 AI 影像工作室。Android 10+，ARM64。
+V1.0.8 · Flutter 安卓 AI 影像工作室。Android 10+，ARM64。
 
 [GitHub](https://github.com/HighnessRK/liuguang) · [Gitee](https://gitee.com/highnesssrk/liuguang)
 
-从仓库 Releases 下载 `liuguang-v1.0.7-arm64.apk`，校验文件 `SHA256.txt` 随版本提供。
+从仓库 Releases 下载 `liuguang-v1.0.8-arm64.apk`，校验文件 `SHA256.txt` 随版本提供。
 
 ## 接入模型
 
@@ -115,7 +115,7 @@ APK 安装前验证应用包名、既有发布签名和版本号；下载可取�
 
 当前真机界面：[作品页](docs/screenshots/published-library-fixed.png) · [外观](docs/screenshots/published-appearance-fixed.png) · [应用更新](docs/screenshots/published-update-settings.png)。
 
-## V1.0.7 补充
+## V1.0.8 补充
 
 识图配置位于「模型连接 → 识图模型配置」。可仅复用对话 Key，识图地址与模型 ID 单独选择。传奇二瞬可关闭识图定制，保留手动控制。生成 GIF 时，有上传图片会先请求识图，再将画面描述和用户输入结合，用户要求优先；这涉及一次识图和一次生图请求。原生返回尺寸、动画帧数与格式仍受服务商支持范围约束，应用保留实际文件。
 

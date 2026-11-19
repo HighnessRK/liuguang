@@ -10,6 +10,16 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'models.dart';
 import 'updates.dart';
 
+Future<Directory> safeTemporaryDirectory() async {
+  try {
+    return await getTemporaryDirectory();
+  } catch (_) {
+    final dir = Directory('${Directory.systemTemp.path}/liuguang-cache');
+    await dir.create(recursive: true);
+    return dir;
+  }
+}
+
 class AppStore extends ChangeNotifier {
   final FlutterSecureStorage secure;
   late SharedPreferences prefs;
@@ -44,9 +54,16 @@ class AppStore extends ChangeNotifier {
 
   Future<void> init() async {
     prefs = await SharedPreferences.getInstance();
-    directory = Directory(
-      '${(await getApplicationSupportDirectory()).path}/studio',
-    );
+    Directory support;
+    try {
+      support = await getApplicationSupportDirectory();
+    } catch (_) {
+      // Some MIUI/Flutter combinations fail the JNI Context lookup in
+      // path_provider_android during cold start. Dart's app-private temp path
+      // is still available and keeps the studio usable while the plugin fails.
+      support = Directory(Directory.systemTemp.path);
+    }
+    directory = Directory('${support.path}/studio');
     await directory.create(recursive: true);
     final raw = prefs.getString('settings');
     if (raw != null) {

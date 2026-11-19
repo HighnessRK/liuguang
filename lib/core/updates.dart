@@ -3,17 +3,26 @@ import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/services.dart';
-import 'package:path_provider/path_provider.dart';
 
 import 'store.dart';
 
-const appVersion = '1.0.7';
-const releaseNotes = '''新增：完成 V1.0.6 的 16 项功能复核，补齐全图点击放大、后台任务、流式进度和创作助手图片理解。
+const appVersion = '1.0.8';
+const releaseNotes =
+    '''修复：解决部分小米设备启动时 path_provider JNI Context 查找失败导致应用无法进入首页的问题。
+新增：创作页将 DeepSeek 表情包入口与文生图、图生图并列，入口更易发现。
+修复：DeepSeek 表情包入口返回与创作页状态衔接。
+优化：继续完善冷启动兼容和真机启动稳定性。''';
+const releaseNotesV107 = '''新增：完成 V1.0.6 的 16 项功能复核，补齐全图点击放大、后台任务、流式进度和创作助手图片理解。
 新增：DeepSeek 大肥鱼娘参考图完整展示，动图固定 512 × 512、8 帧、每帧 200 ms。
 修复：更新弹窗改用当前版本日志，避免显示上一版本内容。
 修复：大肥鱼娘动图加入 smooth motion、consistent character 与帧间一致性约束。
 优化：生成规格窗增加液态玻璃关闭按钮，图片入口统一支持自由缩放查看。
 优化：更新日志、表情包参数和作品预览与当前版本保持一致。''';
+const releaseNotesV106 = '''新增：后台生图任务、动态极光进度卡、真实服务端百分比、图片理解式智能润色。
+新增：创作助手上传图片、识图理解和直接切换模型。
+新增：DeepSeek 大肥鱼娘静态 / 动图表情包模式，分享图模板扩展并支持保存相册。
+修复：传奇二瞬运行状态、图生图底图比例、生成白边和识图复用对话地址。
+优化：悬浮导航、专业模式、GIF 原生协议、全图放大、后台处理和内存回收。''';
 const releaseNotesV104 = '''新增：修图关闭图片入口，离开前确认未导出修改或取消 AI 任务。
 修复：修图功能按钮居中排列，收紧按钮与卡片的多余留白。
 优化：返回按钮采用液态玻璃材质。
@@ -220,7 +229,7 @@ class UpdateService {
     if (uri == null || uri.scheme != 'https' || uri.userInfo.isNotEmpty) {
       throw StateError('此版本没有可用的 HTTPS 安装包附件');
     }
-    final dir = await getTemporaryDirectory();
+    final dir = await safeTemporaryDirectory();
     final path = '${dir.path}/liuguang-update.apk';
     final partial = '$path.part';
     await AppLog.record('update_download_start');
