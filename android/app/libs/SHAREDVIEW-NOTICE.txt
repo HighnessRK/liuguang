@@ -1,0 +1,6 @@
+ITGSA SharedView Kit 1.0.0.5
+Source: https://gitee.com/itgsa_sharedviewkit/SharedViewDemo
+Upstream revision: b449a426a340f1827d942592bddf0a416eae3ac4
+The AAR comes from the official demo's documented local integration channel.
+SHA-256: 7c0937ecde545a262619e5fa19d56a21b0ad3fd8013cbc4fe058c497808702bd
+The SDK is independently distributed by ITGSA. Its licensing is governed by the SDK release terms.

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
@@ -6,6 +7,7 @@ import 'package:flutter_miuix/miuix.dart' as mx;
 import 'package:liquid_glass_renderer/liquid_glass_renderer.dart' as lgr;
 
 import '../core/store.dart';
+import '../core/updates.dart';
 import '../core/appearance.dart';
 import 'editable.dart';
 export 'editable.dart' show StudioSelectable;
@@ -203,6 +205,21 @@ class _GlassScope extends InheritedWidget {
   bool updateShouldNotify(_GlassScope old) => insideGlass != old.insideGlass;
 }
 
+String _buttonEvent(String label) => switch (label) {
+  '智能润色' || '智能润色描述' => 'polish_tapped',
+  '开始创作' => 'image_create_tapped',
+  '生成表情包' => 'sticker_generate_tapped',
+  '开始增强' => 'lens_enhance_tapped',
+  '取消任务' => 'task_cancel_tapped',
+  '从作品导入' || '从相册导入' => 'artwork_import_tapped',
+  '导出' => 'export_tapped',
+  '去安装' || '安装' => 'install_tapped',
+  '下载更新' => 'update_download_tapped',
+  '删除所选' => 'batch_delete_tapped',
+  '全选' => 'select_all_tapped',
+  _ => 'button_tapped',
+};
+
 class GlassButton extends StatelessWidget {
   final String label;
   final IconData? icon;
@@ -237,7 +254,12 @@ class GlassButton extends StatelessWidget {
       enabled: onTap != null && !busy,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: busy ? null : onTap,
+        onTap: busy || onTap == null
+            ? null
+            : () {
+                AppLog.record(_buttonEvent(label));
+                onTap!();
+              },
         child: Opacity(
           opacity: onTap == null || busy ? .68 : 1,
           child: Glass(
@@ -324,7 +346,7 @@ class GlassField extends StatelessWidget {
   final TextEditingController controller;
   final String hint;
   final int minLines, maxLines;
-  final bool obscure;
+  final bool obscure, readOnly;
   final TextInputType? keyboard;
   final ValueChanged<String>? onChanged;
   final Widget? suffix;
@@ -335,6 +357,7 @@ class GlassField extends StatelessWidget {
     this.minLines = 1,
     this.maxLines = 1,
     this.obscure = false,
+    this.readOnly = false,
     this.keyboard,
     this.onChanged,
     this.suffix,
@@ -346,6 +369,7 @@ class GlassField extends StatelessWidget {
     minLines: minLines,
     maxLines: maxLines,
     obscure: obscure,
+    readOnly: readOnly,
     keyboard: keyboard,
     onChanged: onChanged,
     suffix: suffix,
@@ -560,7 +584,7 @@ class _TaskStatusCardState extends State<TaskStatusCard>
     with SingleTickerProviderStateMixin {
   late final controller = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 1600),
+    duration: const Duration(milliseconds: 2200),
   );
   @override
   void didChangeDependencies() {
@@ -569,7 +593,7 @@ class _TaskStatusCardState extends State<TaskStatusCard>
       controller.stop();
       controller.value = 1;
     } else if (!controller.isAnimating) {
-      controller.repeat(reverse: true);
+      controller.repeat();
     }
   }
 
@@ -580,132 +604,141 @@ class _TaskStatusCardState extends State<TaskStatusCard>
   }
 
   @override
-  Widget build(BuildContext context) => AuroraSurface(
-    controller: controller,
-    radius: 30,
-    child: Padding(
-      padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
+  Widget build(BuildContext context) {
+    final percent = widget.progress;
+    return Glass(
+      blur: false,
+      padding: const EdgeInsets.all(16),
+      radius: 26,
       child: Column(
-        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Icon(Icons.auto_awesome_rounded, color: Colors.white, size: 38),
-          const SizedBox(height: 10),
-          Text(
-            widget.title,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              fontSize: 19,
-              fontWeight: FontWeight.w700,
-              color: Colors.white,
-            ),
-          ),
-          const SizedBox(height: 7),
-          Text(
-            widget.stage.replaceAll(RegExp(r'\s+\d+(?:\.\d+)?%$'), ''),
-            textAlign: TextAlign.center,
-            style: const TextStyle(color: Colors.white),
-          ),
-          const SizedBox(height: 12),
-          if (widget.progress != null)
-            Text(
-              '${(widget.progress!.clamp(0, 1) * 100).round()}%',
-              style: const TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.w600,
-                color: Colors.white,
+          Row(
+            children: [
+              TaskPulse(animation: controller, size: 46),
+              const SizedBox(width: 13),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.title,
+                      style: TextStyle(
+                        color: ink(context),
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      widget.stage.replaceAll(
+                        RegExp(r'\s+\d+(?:\.\d+)?%$'),
+                        '',
+                      ),
+                      style: TextStyle(color: muted(context), fontSize: 13),
+                    ),
+                  ],
+                ),
               ),
-            ),
-          Semantics(
-            label: widget.progress == null ? '等待服务端进度' : '生成进度',
-            child: LinearProgressIndicator(
-              value:
-                  widget.progress ??
-                  (MediaQuery.disableAnimationsOf(context) ? 0 : null),
-              color: Colors.white,
-              backgroundColor: Colors.white24,
-              borderRadius: BorderRadius.circular(10),
-            ),
+              if (percent != null)
+                Text(
+                  '${(percent.clamp(0, 1) * 100).round()}%',
+                  style: TextStyle(
+                    color: accentInk(context),
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+            ],
           ),
-          const SizedBox(height: 10),
-          Text(
-            '已用时 ${widget.seconds} 秒',
-            style: const TextStyle(fontSize: 12, color: Colors.white),
-          ),
-          if (widget.onCancel != null) ...[
-            const SizedBox(height: 10),
-            GlassButton(
-              '取消任务',
-              small: true,
-              primary: true,
-              onTap: widget.onCancel,
+          const SizedBox(height: 16),
+          if (percent != null)
+            TweenAnimationBuilder<double>(
+              tween: Tween(end: percent.clamp(0, 1)),
+              duration: MediaQuery.disableAnimationsOf(context)
+                  ? Duration.zero
+                  : const Duration(milliseconds: 220),
+              builder: (context, value, _) => LinearProgressIndicator(
+                value: value,
+                color: accent(context),
+                backgroundColor: accent(context).withValues(alpha: .12),
+                minHeight: 4,
+                borderRadius: BorderRadius.circular(8),
+              ),
+            )
+          else
+            LinearProgressIndicator(
+              value: MediaQuery.disableAnimationsOf(context) ? 0 : null,
+              color: accent(context),
+              backgroundColor: accent(context).withValues(alpha: .12),
+              minHeight: 4,
+              borderRadius: BorderRadius.circular(8),
             ),
-          ],
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '已用时 ${widget.seconds} 秒',
+                  style: TextStyle(fontSize: 12, color: muted(context)),
+                ),
+              ),
+              if (widget.onCancel != null)
+                GlassButton('取消任务', small: true, onTap: widget.onCancel),
+            ],
+          ),
         ],
       ),
-    ),
-  );
+    );
+  }
 }
 
-class AuroraSurface extends StatelessWidget {
-  final Animation<double> controller;
-  final double radius;
-  final Widget child;
-  const AuroraSurface({
-    super.key,
-    required this.controller,
-    required this.radius,
-    required this.child,
-  });
+class TaskPulse extends StatelessWidget {
+  final Animation<double> animation;
+  final double size;
+  const TaskPulse({super.key, required this.animation, required this.size});
 
   @override
-  Widget build(BuildContext context) => Stack(
-    children: [
-      Positioned.fill(
-        child: RepaintBoundary(
-          child: CustomPaint(painter: _AuroraPainter(controller, radius)),
+  Widget build(BuildContext context) {
+    final color = accentInk(context);
+    return SizedBox.square(
+      dimension: size,
+      child: RepaintBoundary(
+        child: AnimatedBuilder(
+          animation: animation,
+          child: Icon(
+            Icons.auto_awesome_rounded,
+            color: color,
+            size: size * .49,
+          ),
+          builder: (_, child) {
+            final pulse = .5 - .5 * math.cos(animation.value * 2 * math.pi);
+            return Stack(
+              alignment: Alignment.center,
+              children: [
+                Positioned.fill(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: color.withValues(alpha: .16 + pulse * .14),
+                      ),
+                      gradient: RadialGradient(
+                        colors: [
+                          color.withValues(alpha: .25 + pulse * .12),
+                          color.withValues(alpha: .06),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                Transform.scale(scale: .88 + pulse * .16, child: child),
+              ],
+            );
+          },
         ),
       ),
-      child,
-    ],
-  );
-}
-
-class _AuroraPainter extends CustomPainter {
-  final Animation<double> phase;
-  final double radius;
-  _AuroraPainter(this.phase, this.radius) : super(repaint: phase);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final rect = Offset.zero & size;
-    final shape = RRect.fromRectAndRadius(rect, Radius.circular(radius));
-    canvas.save();
-    canvas.clipRRect(shape);
-    canvas.drawRect(rect, Paint()..color = const Color(0xff23224f));
-    const colors = [Color(0xffd04b9a), Color(0xff7c54df), Color(0xff0594b0)];
-    final angle = phase.value * math.pi;
-    for (var i = 0; i < colors.length; i++) {
-      final center = Alignment(
-        math.cos(angle + i * 2.1),
-        math.sin(angle + i * 2.1),
-      );
-      canvas.drawRect(
-        rect,
-        Paint()
-          ..shader = RadialGradient(
-            center: center,
-            radius: .96,
-            colors: [colors[i], colors[i].withValues(alpha: 0)],
-          ).createShader(rect),
-      );
-    }
-    canvas.drawRect(rect, Paint()..color = const Color(0x300a1229));
-    canvas.restore();
+    );
   }
-
-  @override
-  bool shouldRepaint(_AuroraPainter oldDelegate) =>
-      oldDelegate.phase != phase || oldDelegate.radius != radius;
 }
 
 class AuroraBusyButton extends StatefulWidget {
@@ -718,7 +751,7 @@ class _AuroraBusyButtonState extends State<AuroraBusyButton>
     with SingleTickerProviderStateMixin {
   late final motion = AnimationController(
     vsync: this,
-    duration: const Duration(seconds: 3),
+    duration: const Duration(milliseconds: 1450),
   );
   @override
   void didChangeDependencies() {
@@ -726,7 +759,7 @@ class _AuroraBusyButtonState extends State<AuroraBusyButton>
     if (MediaQuery.disableAnimationsOf(context)) {
       motion.stop();
     } else if (!motion.isAnimating) {
-      motion.repeat(reverse: true);
+      motion.repeat();
     }
   }
 
@@ -737,19 +770,24 @@ class _AuroraBusyButtonState extends State<AuroraBusyButton>
   }
 
   @override
-  Widget build(BuildContext context) => AuroraSurface(
-    controller: motion,
+  Widget build(BuildContext context) => Glass(
+    blur: false,
     radius: 16,
-    child: const Padding(
-      padding: EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.auto_awesome_rounded, color: Colors.white, size: 18),
-          SizedBox(width: 7),
-          Text('润色中…', style: TextStyle(color: Colors.white)),
-        ],
-      ),
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        TaskPulse(animation: motion, size: 24),
+        const SizedBox(width: 6),
+        Text(
+          '润色中…',
+          style: TextStyle(
+            color: ink(context),
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
     ),
   );
 }
@@ -902,50 +940,94 @@ class EmptyState extends StatelessWidget {
   );
 }
 
+OverlayEntry? _notice;
+Timer? _noticeTimer;
+
 void toast(BuildContext context, String text) {
-  ScaffoldMessenger.of(context).hideCurrentSnackBar();
-  ScaffoldMessenger.of(context).showSnackBar(
-    SnackBar(
-      backgroundColor: Colors.transparent,
-      elevation: 0,
-      padding: EdgeInsets.zero,
-      content: Glass(
-        radius: 20,
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
-        child: Row(
-          children: [
-            Icon(
-              Icons.info_outline_rounded,
-              color: accentInk(context),
-              size: 20,
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                text,
-                maxLines: 4,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 14,
-                  height: 1.5,
-                  color: ink(context),
+  final overlay = Overlay.maybeOf(context);
+  if (overlay == null) return;
+  _noticeTimer?.cancel();
+  _notice?.remove();
+  final success =
+      text.startsWith('已完成') ||
+      text.startsWith('已保存') ||
+      text.startsWith('已生成');
+  AppLog.record(success ? 'success_notice' : 'app_notice');
+  final reduce = MediaQuery.disableAnimationsOf(context);
+  final entry = OverlayEntry(
+    builder: (context) => Positioned(
+      top: 8,
+      left: 16,
+      right: 16,
+      child: SafeArea(
+        bottom: false,
+        child: IgnorePointer(
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 460),
+              child: TweenAnimationBuilder<double>(
+                tween: Tween(begin: 0, end: 1),
+                duration: reduce
+                    ? Duration.zero
+                    : const Duration(milliseconds: 200),
+                curve: Curves.easeOutCubic,
+                builder: (_, v, child) => Opacity(
+                  opacity: v,
+                  child: Transform.translate(
+                    offset: Offset(0, -12 * (1 - v)),
+                    child: child,
+                  ),
+                ),
+                child: Glass(
+                  blur: false,
+                  tint: Theme.of(context).colorScheme.surface,
+                  opacity: .98,
+                  radius: 21,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 13,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        success
+                            ? Icons.check_circle_outline_rounded
+                            : Icons.info_outline_rounded,
+                        color: accentInk(context),
+                        size: 20,
+                      ),
+                      const SizedBox(width: 10),
+                      Flexible(
+                        child: Text(
+                          text,
+                          maxLines: 4,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: ink(context),
+                            fontSize: 14,
+                            height: 1.45,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
-          ],
+          ),
         ),
       ),
-      behavior: SnackBarBehavior.floating,
-      margin: EdgeInsets.fromLTRB(
-        16,
-        0,
-        16,
-        ModalRoute.of(context)?.isFirst == true ? 112 : 16,
-      ),
-      duration: const Duration(seconds: 5),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
     ),
   );
+  _notice = entry;
+  overlay.insert(entry);
+  _noticeTimer = Zone.root.createTimer(const Duration(seconds: 4), () {
+    if (identical(_notice, entry)) {
+      entry.remove();
+      _notice = null;
+    }
+  });
 }
 
 Future<T?> glassSheet<T>(

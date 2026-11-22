@@ -6,6 +6,11 @@ import android.os.Build
 import android.provider.Settings
 import androidx.core.content.FileProvider
 import java.security.MessageDigest
+import android.graphics.Rect
+import android.os.Bundle
+import com.itgsa.animation.sharedview.ViewAnimationManager
+import com.itgsa.animation.sharedview.ViewAnimationExtras
+import com.itgsa.animation.sharedview.ViewAnimationListener
 import android.content.ContentValues
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -66,6 +71,41 @@ class MainActivity : FlutterActivity() {
         registerMemoryReceiver(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "liuguang/native").setMethodCallHandler { call, result ->
             when (call.method) {
+                "sharedViewCapability" -> result.success(runCatching { ViewAnimationManager.isViewAnimationSupported() }.getOrDefault(0))
+                "openSharedArtwork" -> {
+                    val supported = runCatching { ViewAnimationManager.isViewAnimationSupported() > 0 }.getOrDefault(false)
+                    val raw = call.argument<String>("path")
+                    val values = call.argument<List<Double>>("bounds")
+                    if (!supported || raw == null || values?.size != 4 || values.any { !it.isFinite() }) {
+                        result.success(false)
+                    } else {
+                        executor.execute {
+                            val target = runCatching { File(raw).canonicalFile }.getOrNull()
+                            val root = File(filesDir, "studio").canonicalPath + File.separator
+                            val thumbnail = if (target != null && target.path.startsWith(root) && target.isFile) runCatching { previewBitmap(target, 640) }.getOrNull() else null
+                            runOnUiThread {
+                                val started = thumbnail != null && target != null && !isFinishing && !isDestroyed && runCatching {
+                                    val windowOrigin = IntArray(2)
+                                    val meta = ViewAnimationManager.getViewAnimationExtras()?.get(ViewAnimationExtras.EXTRA_BOUNDS)
+                                    if (meta?.split('|')?.getOrNull(1) == "WINDOW") window.decorView.getLocationInWindow(windowOrigin)
+                                    else window.decorView.getLocationOnScreen(windowOrigin)
+                                    val bounds = Rect(values[0].toInt() + windowOrigin[0], values[1].toInt() + windowOrigin[1],
+                                        values[2].toInt() + windowOrigin[0], values[3].toInt() + windowOrigin[1])
+                                    if (bounds.isEmpty) return@runCatching false
+                                    val options = ViewAnimationManager.makeViewAnimationOptions(thumbnail, bounds,
+                                        24f * resources.displayMetrics.density, Bundle(), object : ViewAnimationListener {
+                                            override fun onAnimationStart(animMode: Int) { android.util.Log.i("LiuguangSharedView", "start $animMode") }
+                                            override fun onAnimationEnd(animMode: Int) { android.util.Log.i("LiuguangSharedView", "end $animMode") }
+                                            override fun onAnimationCancel(animMode: Int) { android.util.Log.i("LiuguangSharedView", "cancel $animMode") }
+                                        }) ?: return@runCatching false
+                                    startActivity(Intent(this, SharedArtworkActivity::class.java).putExtra("path", target.path), options.toBundle())
+                                    true
+                                }.getOrDefault(false)
+                                result.success(started)
+                            }
+                        }
+                    }
+                }
                 "beginProcessing" -> {
                     try {
                         val service = Intent(this, ProcessingService::class.java).putExtra("cloud", call.argument<Boolean>("cloud") ?: true).putExtra("local", call.argument<Boolean>("local") ?: false)
@@ -93,7 +133,8 @@ class MainActivity : FlutterActivity() {
                 "installUpdate" -> {
                     try {
                         val file = File(call.argument<String>("path") ?: error("未指定安装包")).canonicalFile
-                        check(file.path.startsWith(cacheDir.canonicalPath + File.separator)) { "安装包必须位于应用缓存目录" }
+                        val updates = File(filesDir, "studio/packages").canonicalFile
+                        check(file.parentFile == updates && file.isFile && file.extension.equals("apk", ignoreCase = true)) { "安装包必须位于应用更新目录" }
                         val archive = packageManager.getPackageArchiveInfo(file.path, PackageManager.GET_SIGNING_CERTIFICATES) ?: error("安装包无效")
                         check(archive.packageName == packageName) { "安装包包名不匹配" }
                         val expected = "7298c7e695fd825f5b9b981da4c0d77458a849aa35d21058e35a8fc8044f70a6"

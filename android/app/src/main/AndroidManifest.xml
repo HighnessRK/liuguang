@@ -16,6 +16,8 @@
         <provider android:name="androidx.core.content.FileProvider" android:authorities="${applicationId}.update_provider" android:exported="false" android:grantUriPermissions="true">
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/update_paths" />
         </provider>
+        <activity android:name=".SharedArtworkActivity" android:exported="false"
+            android:theme="@android:style/Theme.Material.NoActionBar" />
         <receiver android:name=".UpdateAlarmReceiver" android:exported="false">
             <intent-filter><action android:name="android.intent.action.BOOT_COMPLETED" /><action android:name="android.intent.action.MY_PACKAGE_REPLACED" /></intent-filter>
         </receiver>

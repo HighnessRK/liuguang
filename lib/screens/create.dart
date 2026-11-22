@@ -23,6 +23,7 @@ class CreateScreen extends StatefulWidget {
   final AppStore store;
   final StudioApi api;
   final VoidCallback onSettings;
+  final ValueChanged<Artwork>? onOpenLibrary;
   final ValueChanged<String> onEdit;
   final String? initialPrompt;
   const CreateScreen({
@@ -32,6 +33,7 @@ class CreateScreen extends StatefulWidget {
     required this.onSettings,
     required this.onEdit,
     this.initialPrompt,
+    this.onOpenLibrary,
   });
   @override
   State<CreateScreen> createState() => _CreateScreenState();
@@ -165,12 +167,12 @@ class _CreateScreenState extends State<CreateScreen> {
               style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 16),
-            if (widget.store.artworks.isEmpty)
+            if (widget.store.visibleArtworks.isEmpty)
               const Padding(
                 padding: EdgeInsets.all(20),
                 child: Text('还没有作品，可先从相册添加'),
               ),
-            for (final art in widget.store.artworks)
+            for (final art in widget.store.visibleArtworks)
               Padding(
                 padding: const EdgeInsets.only(bottom: 10),
                 child: Glass(
@@ -329,6 +331,7 @@ class _CreateScreenState extends State<CreateScreen> {
       if (!mounted) {
         return;
       }
+      setState(() => polishing = false);
       final apply = await glassSheet<bool>(
         context,
         Builder(
@@ -412,12 +415,14 @@ class _CreateScreenState extends State<CreateScreen> {
     setState(() {
       busy = true;
       error = null;
+      taskStage = '正在准备请求';
       seconds = 0;
       results = [];
     });
+    final elapsed = Stopwatch()..start();
     timer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) {
-        setState(() => seconds++);
+        setState(() => seconds = elapsed.elapsed.inSeconds);
       }
     });
     try {
@@ -585,10 +590,10 @@ class _CreateScreenState extends State<CreateScreen> {
         GlassSegments(
           labels: const ['文生图', '图生图', '表情包'],
           selected: mode.clamp(0, 2),
-          onChanged: (v) {
+          onChanged: (v) async {
             if (busy) return;
             if (v == 2) {
-              Navigator.push(
+              final saved = await Navigator.push<Artwork>(
                 context,
                 MaterialPageRoute(
                   builder: (_) => DeepSeekStickerScreen(
@@ -597,6 +602,7 @@ class _CreateScreenState extends State<CreateScreen> {
                   ),
                 ),
               );
+              if (mounted && saved != null) widget.onOpenLibrary?.call(saved);
               return;
             }
             setState(() => mode = v);
@@ -648,12 +654,15 @@ class _CreateScreenState extends State<CreateScreen> {
                 onTap: busy ? null : () => prompt.clear(),
               ),
               const SizedBox(width: 8),
-              GlassButton(
-                polishing ? '润色中…' : '智能润色',
-                small: true,
-                icon: Icons.auto_awesome_outlined,
-                onTap: polishing || busy ? null : polish,
-              ),
+              if (polishing)
+                const AuroraBusyButton()
+              else
+                GlassButton(
+                  '智能润色',
+                  small: true,
+                  icon: Icons.auto_awesome_outlined,
+                  onTap: polishing || busy ? null : polish,
+                ),
             ],
           ),
         ),

@@ -6,8 +6,14 @@ import 'package:flutter/services.dart';
 
 import 'store.dart';
 
-const appVersion = '1.1.0';
-const releaseNotes = '''新增：表情包动图固定输出 GIF、512 × 512、8 帧、每帧 150 ms，并加入 smooth motion、consistent character 与帧间一致性约束。
+const appVersion = '1.1.1';
+const releaseNotes = '''修复：作品长按和多选保持滚动位置，表情包生成后打开新作品详情。
+修复：角色切换、编辑和删除统一管理，三视图与角色名称同步。
+新增：关于琉光提供分类日志，支持手动清理及自动保留七天。
+优化：隐藏空间支持从作品顶部继续下拉并随手势显示进度。
+优化：重做润色、生图任务和传奇二瞬界面，完成提示移到顶部。
+新增：接入金标联盟 SharedView Kit，支持的设备可在作品大图使用原生过渡。''';
+const releaseNotesV110 = '''新增：表情包动图固定输出 GIF、512 × 512、8 帧、每帧 150 ms，并加入 smooth motion、consistent character 与帧间一致性约束。
 新增：存储管理支持查看、批量删除和安装已下载的更新安装包。
 新增：作品隐藏空间，支持长按批量移入和还原，并保留原生成时间顺序。
 新增：表情包角色创建支持从作品添加三视图、识图自动生成描述和角色切换。
@@ -73,44 +79,88 @@ int compareVersions(String a, String b) {
 class AppLog {
   static File? file;
   static Future<void> queue = Future.value();
+  static DateTime? _lastPrune;
+  static const retention = Duration(days: 7);
+
   static Future<void> init(Directory directory) async {
     file = File('${directory.path}/diagnostics.jsonl');
+    _lastPrune = null;
     await record('application_start');
   }
 
-  // Only event identifiers and numeric data are accepted: never log prompts,
-  // keys, request bodies, response bodies, URLs or arbitrary exceptions.
-  static Future<void> record(String event, {int? status}) {
-    if (!RegExp(r'^[a-z_]+$').hasMatch(event)) return Future.value();
-    queue = queue.catchError((_) {}).then((_) async {
-      if (file == null) return;
-      final lines = await file!.exists()
-          ? await file!.readAsLines()
-          : <String>[];
-      lines.add(
-        jsonEncode({
-          'time': DateTime.now().toIso8601String(),
-          'event': event,
-          'status': ?status,
-        }),
-      );
-      await file!.writeAsString(
-        '${lines.skip(lines.length > 300 ? lines.length - 300 : 0).join('\n')}\n',
-        flush: true,
-      );
-    });
-    return queue;
+  static Future<void> record(
+    String event, {
+    int? status,
+    int? elapsedMs,
+    bool error = false,
+    int? images,
+    int? inputTokens,
+    int? outputTokens,
+  }) {
+    if (file == null || !RegExp(r'^[a-z_]{1,80}$').hasMatch(event))
+      return Future.value();
+    return queue = queue
+        .catchError((_) {})
+        .then((_) async {
+          final target = file;
+          if (target == null) return;
+          final now = DateTime.now();
+          if (_lastPrune == null ||
+              now.difference(_lastPrune!) > const Duration(hours: 1)) {
+            await _prune(target, now);
+          }
+          await target.writeAsString(
+            '${jsonEncode({'time': now.toIso8601String(), 'event': event, 'level': error || (status ?? 0) >= 400 || event.contains('failure') || event.endsWith('_error') ? 'error' : 'info', 'status': ?status, 'elapsedMs': ?elapsedMs, 'images': ?images, 'inputTokens': ?inputTokens, 'outputTokens': ?outputTokens})}\n',
+            mode: FileMode.append,
+          );
+        })
+        .catchError((_) {});
+  }
+
+  static Map<String, dynamic>? parse(String line) {
+    try {
+      final value = jsonDecode(line);
+      return value is Map<String, dynamic> ? value : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<void> _prune(File target, DateTime now) async {
+    _lastPrune = now;
+    if (!await target.exists()) return;
+    final cutoff = now.subtract(retention);
+    final lines = await target.readAsLines();
+    final retained = lines.where((line) {
+      final time = parse(line)?['time'];
+      final date = time is String ? DateTime.tryParse(time) : null;
+      return date != null && !date.isBefore(cutoff);
+    }).toList();
+    if (retained.length == lines.length) return;
+    final tmp = File('${target.path}.tmp');
+    await tmp.writeAsString(
+      retained.isEmpty ? '' : '${retained.join('\n')}\n',
+      flush: true,
+    );
+    await tmp.rename(target.path);
   }
 
   static Future<String> read() async {
-    await queue;
-    return file != null && await file!.exists() ? file!.readAsString() : '';
+    final result = queue.catchError((_) {}).then((_) async {
+      final target = file;
+      if (target == null || !await target.exists()) return '';
+      await _prune(target, DateTime.now());
+      return target.readAsString();
+    });
+    queue = result.then<void>((_) {}).catchError((_) {});
+    return result;
   }
 
-  static Future<void> clear() async {
-    await queue;
-    await file?.writeAsString('');
-  }
+  static Future<void> clear() =>
+      queue = queue.catchError((_) {}).then((_) async {
+        final target = file;
+        if (target != null && await target.exists()) await target.delete();
+      });
 }
 
 class ReleaseInfo {
@@ -227,7 +277,33 @@ class UpdateService {
     }
   }
 
-  Future<String> downloadAndInstall(
+  Directory get packageDirectory =>
+      Directory('${store.directory.path}/packages');
+
+  File _packageFile(ReleaseInfo info) {
+    final version = info.version
+        .replaceFirst(RegExp(r'^[vV]'), '')
+        .replaceAll(RegExp(r'[^0-9A-Za-z._-]'), '_');
+    return File('${packageDirectory.path}/liuguang-v$version.apk');
+  }
+
+  Future<String?> downloadedPackage(ReleaseInfo info) async {
+    final file = _packageFile(info);
+    final legacy = File(
+      '${packageDirectory.path}/liuguang-${info.version.replaceAll(RegExp(r'[^0-9A-Za-z._-]'), '_')}.apk',
+    );
+    for (final candidate in [file, legacy]) {
+      if (await candidate.exists()) {
+        final length = await candidate.length();
+        if (length > 0 &&
+            (info.size == null || info.size == 0 || length == info.size))
+          return candidate.path;
+      }
+    }
+    return null;
+  }
+
+  Future<String> downloadPackage(
     ReleaseInfo info,
     CancelToken cancel,
     void Function(int, int) progress,
@@ -236,14 +312,11 @@ class UpdateService {
     if (uri == null || uri.scheme != 'https' || uri.userInfo.isNotEmpty) {
       throw StateError('此版本没有可用的 HTTPS 安装包附件');
     }
-    final dir = Directory('${store.directory.path}/packages');
-    await dir.create(recursive: true);
-    final safeVersion = info.version.replaceAll(
-      RegExp(r'[^0-9A-Za-z._-]'),
-      '_',
-    );
-    final path = '${dir.path}/liuguang-$safeVersion.apk';
-    final partial = '$path.part';
+    final existing = await downloadedPackage(info);
+    if (existing != null) return existing;
+    await packageDirectory.create(recursive: true);
+    final path = _packageFile(info).path;
+    final partial = '$path.${DateTime.now().microsecondsSinceEpoch}.part';
     await AppLog.record('update_download_start');
     try {
       await dio.download(
@@ -263,7 +336,6 @@ class UpdateService {
           await downloaded.length() != info.size) {
         throw StateError('安装包长度校验失败');
       }
-      if (await File(path).exists()) await File(path).delete();
       await downloaded.rename(path);
       await AppLog.record('update_download_complete');
       return path;

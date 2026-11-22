@@ -77,25 +77,30 @@ void main() {
       );
     },
   );
-  test(
-    'diagnostics reject arbitrary content and retain bounded history',
-    () async {
-      final directory = await Directory.systemTemp.createTemp('liuguang_logs_');
-      try {
-        await AppLog.init(directory);
-        await AppLog.record('api_key=should_not_appear');
-        for (var i = 0; i < 305; i++) {
-          await AppLog.record('test_event', status: i);
-        }
-        final content = await AppLog.read();
-        expect(content, isNot(contains('should_not_appear')));
-        expect(const LineSplitter().convert(content).length, 300);
-        await AppLog.clear();
-        expect(await AppLog.read(), isEmpty);
-      } finally {
-        AppLog.file = null;
-        await directory.delete(recursive: true);
+  test('diagnostics reject arbitrary content and prune records older than seven days', () async {
+    final directory = await Directory.systemTemp.createTemp('liuguang_logs_');
+    try {
+      await AppLog.init(directory);
+      await AppLog.record('api_key=should_not_appear');
+      final expired = jsonEncode({
+        'time': DateTime.now()
+            .subtract(const Duration(days: 8))
+            .toIso8601String(),
+        'event': 'expired_event',
+      });
+      await AppLog.file!.writeAsString('$expired\n', mode: FileMode.append);
+      for (var i = 0; i < 305; i++) {
+        await AppLog.record('test_event', status: i);
       }
-    },
-  );
+      final content = await AppLog.read();
+      expect(content, isNot(contains('should_not_appear')));
+      expect(const LineSplitter().convert(content).length, 306);
+      expect(content, isNot(contains('expired_event')));
+      await AppLog.clear();
+      expect(await AppLog.read(), isEmpty);
+    } finally {
+      AppLog.file = null;
+      await directory.delete(recursive: true);
+    }
+  });
 }

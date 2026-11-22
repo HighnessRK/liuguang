@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
@@ -20,6 +21,8 @@ import 'package:liuguang/main.dart';
 import 'package:liuguang/ui/navigation.dart';
 import 'package:liuguang/ui/glass.dart';
 import 'package:liuguang/screens/editor.dart';
+import 'package:liuguang/screens/deepseek.dart';
+import 'package:liuguang/core/imaging.dart';
 import 'package:liuguang/screens/share_card.dart';
 import 'package:liuguang/screens/create.dart';
 import 'package:liuguang/screens/settings.dart';
@@ -92,6 +95,37 @@ class MotionFixtureApi extends StudioApi {
   }
 }
 
+class StickerFixtureApi extends StudioApi {
+  GenerationOptions? options;
+  String? prompt;
+  StickerFixtureApi(super.store);
+
+  @override
+  Future<String> chat(
+    List<ChatMessage> messages, {
+    bool polish = false,
+    void Function(String)? onText,
+    CancelToken? cancelToken,
+  }) async {
+    return '角色轻轻挥手';
+  }
+
+  @override
+  Future<ImageReply> generate({
+    required String prompt,
+    required GenerationOptions options,
+    List<String> inputs = const [],
+    Uint8List? mask,
+    CancelToken? cancelToken,
+    String operation = '文生图',
+    void Function(String)? onStage,
+  }) async {
+    this.options = options;
+    this.prompt = prompt;
+    return ImageReply([image.encodePng(image.Image(width: 64, height: 64))]);
+  }
+}
+
 class FakeUpdates extends uc.UpdateService {
   uc.ReleaseInfo answer = uc.ReleaseInfo(
     uc.appVersion,
@@ -104,6 +138,24 @@ class FakeUpdates extends uc.UpdateService {
   FakeUpdates(super.store);
   @override
   Future<uc.ReleaseInfo?> check() async => answer;
+  final completed = Completer<String>();
+  String? installedPath;
+  @override
+  Future<String?> downloadedPackage(uc.ReleaseInfo info) async => null;
+  @override
+  Future<String> downloadPackage(
+    uc.ReleaseInfo info,
+    CancelToken cancel,
+    void Function(int, int) progress,
+  ) {
+    progress(5, 10);
+    return completed.future;
+  }
+
+  @override
+  Future<void> installDownloaded(String path) async {
+    installedPath = path;
+  }
 }
 
 void main() {
@@ -214,66 +266,54 @@ void main() {
     },
   );
 
-  testWidgets(
-    'route snapshots only live during transitions and reduced motion bypasses them',
-    (tester) async {
-      await tester.pumpWidget(LiuguangApp(store: store));
-      await tester.pumpAndSettle();
-      var context = tester.element(find.byType(StudioHome));
-      Navigator.of(context).push(
-        MaterialPageRoute<void>(
-          builder: (_) =>
-              const SettingsDetail(title: '过渡检查', children: [Text('页面内容')]),
-        ),
-      );
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
-      expect(
-        tester
-            .widgetList<SnapshotWidget>(
-              find.byType(SnapshotWidget, skipOffstage: false),
-            )
-            .any((snapshot) => snapshot.controller.allowSnapshotting),
-        isTrue,
-      );
-      await tester.pumpAndSettle();
-      expect(
-        tester
-            .widgetList<SnapshotWidget>(find.byType(SnapshotWidget))
-            .every((snapshot) => !snapshot.controller.allowSnapshotting),
-        isTrue,
-      );
-      Navigator.of(tester.element(find.text('过渡检查'))).pop();
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
-      expect(
-        tester
-            .widgetList<SnapshotWidget>(
-              find.byType(SnapshotWidget, skipOffstage: false),
-            )
-            .any((snapshot) => snapshot.controller.allowSnapshotting),
-        isTrue,
-      );
-      await tester.pumpAndSettle();
-      store.reduceMotion = true;
-      store.refresh();
-      await tester.pumpAndSettle();
-      context = tester.element(find.byType(StudioHome));
-      Navigator.of(context).push(
-        MaterialPageRoute<void>(
-          builder: (_) =>
-              const SettingsDetail(title: '无动效检查', children: [Text('页面内容')]),
-        ),
-      );
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
-      expect(find.byType(SnapshotWidget), findsNothing);
-      expect(find.text('页面内容'), findsOneWidget);
-      await tester.pumpAndSettle();
-      await tester.pumpWidget(const SizedBox.shrink());
-      expect(tester.takeException(), isNull);
-    },
-  );
+  testWidgets('route uses lightweight transitions and honors reduced motion', (
+    tester,
+  ) async {
+    await tester.pumpWidget(LiuguangApp(store: store));
+    await tester.pumpAndSettle();
+    var context = tester.element(find.byType(StudioHome));
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) =>
+            const SettingsDetail(title: '过渡检查', children: [Text('页面内容')]),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    final routeTransition = find.ancestor(
+      of: find.text('页面内容'),
+      matching: find.byType(SlideTransition),
+    );
+    expect(routeTransition, findsWidgets);
+    expect(find.byType(SnapshotWidget), findsNothing);
+    await tester.pumpAndSettle();
+    Navigator.of(tester.element(find.text('过渡检查'))).pop();
+    await tester.pumpAndSettle();
+    store.reduceMotion = true;
+    store.refresh();
+    await tester.pumpAndSettle();
+    context = tester.element(find.byType(StudioHome));
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) =>
+            const SettingsDetail(title: '无动效检查', children: [Text('页面内容')]),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(find.byType(SnapshotWidget), findsNothing);
+    expect(find.text('页面内容'), findsOneWidget);
+    expect(
+      find.ancestor(
+        of: find.text('页面内容'),
+        matching: find.byType(SlideTransition),
+      ),
+      findsNothing,
+    );
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(const SizedBox.shrink());
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets(
     'selection has a green check, haptics and reversible toolbar animation',
@@ -1038,10 +1078,10 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('当前已是最新版本'), findsOneWidget);
       expect(find.byType(us.ReleaseCard), findsNothing);
-      expect(find.text('下载并安装'), findsNothing);
+      expect(find.text('下载更新'), findsNothing);
       expect(find.text('V1.0.0 · 2026-11-09'), findsOneWidget);
       service.answer = uc.ReleaseInfo(
-        '1.0.10',
+        '99.0.0',
         '更新',
         'gitee',
         '',
@@ -1051,10 +1091,130 @@ void main() {
       await tester.tap(find.text('检查更新'));
       await tester.pumpAndSettle();
       expect(find.byType(us.ReleaseCard), findsOneWidget);
-      expect(find.text('下载并安装'), findsOneWidget);
+      expect(find.text('下载更新'), findsOneWidget);
       expect(find.byType(Dialog), findsOneWidget);
     },
   );
+  testWidgets(
+    'long update notes scroll independently and install follows download',
+    (tester) async {
+      final service = FakeUpdates(store);
+      service.answer = uc.ReleaseInfo(
+        '99.0.0',
+        List.generate(30, (i) => '新增：新版本条目 $i').join('\n'),
+        'gitee',
+        '',
+        'https://example.org/a.apk',
+        10,
+      );
+      await tester.pumpWidget(LiuguangApp(store: store));
+      await tester.pumpAndSettle();
+      final context = tester.element(find.byType(StudioHome));
+      unawaited(
+        us.floatingRelease(
+          context,
+          us.ReleaseCard(service: service, release: service.answer),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('下载更新'));
+      await tester.pumpAndSettle();
+      final progress = find.byType(LinearProgressIndicator);
+      expect(tester.widget<LinearProgressIndicator>(progress).value, .5);
+      final before = tester.getTopLeft(progress);
+      final log = find.descendant(
+        of: find.byType(us.ReleaseCard),
+        matching: find.byType(SingleChildScrollView),
+      );
+      await tester.drag(log, const Offset(0, -250));
+      await tester.pumpAndSettle();
+      expect(tester.getTopLeft(progress), before);
+      expect(service.installedPath, isNull);
+      service.completed.complete('verified.apk');
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('去安装'));
+      await tester.pumpAndSettle();
+      expect(service.installedPath, 'verified.apk');
+    },
+  );
+
+  testWidgets('static sticker is saved as JPEG and opens the artwork tab', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(440, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    store.imageApi = EndpointConfig(
+      baseUrl: 'https://example.org/v1',
+      key: 'dummy',
+      model: 'gpt-image-2.6',
+    );
+    store.chatApi = EndpointConfig(
+      baseUrl: 'https://example.org/v1',
+      key: 'dummy',
+      model: 'chat',
+    );
+    final api = StickerFixtureApi(store);
+    await tester.pumpWidget(LiuguangApp(store: store, api: api));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('表情包'));
+    await tester.pumpAndSettle();
+    expect(find.byType(DeepSeekStickerScreen), findsOneWidget);
+    await tester.enterText(find.byType(TextField).last, '你好');
+    final generate = find.text('生成表情包');
+    await tester.ensureVisible(generate);
+    await tester.runAsync(() async {
+      await tester.tap(generate);
+      for (
+        var i = 0;
+        i < 100 && store.prefs.getString('last_sticker_profile') != 'fish';
+        i++
+      ) {
+        await Future<void>.delayed(const Duration(milliseconds: 25));
+      }
+    });
+    await tester.pumpAndSettle();
+    expect(api.options?.format, 'jpeg');
+    expect(api.prompt, contains('smooth motion, consistent character'));
+    expect(api.prompt, contains('帧间一致性'));
+    expect(store.artworks.single.path, endsWith('.jpg'));
+    expect(find.byType(ArtworkDetail), findsOneWidget);
+    expect(find.text('继续修图'), findsOneWidget);
+  });
+
+  test(
+    'sticker GIF rejects wrong duration and accepts eight native frames',
+    () {
+      Uint8List gif(int duration) {
+        final encoder = image.GifEncoder(repeat: 0);
+        for (var i = 0; i < 8; i++) {
+          encoder.addFrame(
+            image.fill(
+              image.Image(width: 512, height: 512),
+              color: image.ColorRgb8(i * 20, 50, 50),
+            ),
+            duration: duration,
+          );
+        }
+        return encoder.finish()!;
+      }
+
+      final payload = imagePayload(
+        EndpointConfig(model: 'gpt-image-2.6', protocol: ApiProtocol.gptImage),
+        stickerOptions(true),
+        '挥手',
+      );
+      expect(payload, containsPair('output_format', 'gif'));
+      expect(payload, containsPair('size', '512x512'));
+      expect(payload, containsPair('frame_count', 8));
+      expect(payload, containsPair('frame_duration_ms', 150));
+      expect(() => validateStickerGif(gif(15)), returnsNormally);
+      expect(
+        () => validateStickerGif(gif(20)),
+        throwsA(isA<StudioException>()),
+      );
+    },
+  );
+
   testWidgets(
     'about page has grouped entries instead of long inline disclosures',
     (tester) async {
@@ -1096,7 +1256,7 @@ void main() {
     await open();
     await tester.tap(find.byTooltip('关闭图片'));
     await tester.pumpAndSettle();
-    expect(find.text('用示例照片体验'), findsOneWidget);
+    expect(find.text('从作品导入'), findsOneWidget);
     expect(home.editorPath, isNull);
     await open();
     final dynamic editor = tester.state(find.byType(EditorScreen));
@@ -1111,7 +1271,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('确认'));
     await tester.pumpAndSettle();
-    expect(find.text('用示例照片体验'), findsOneWidget);
+    expect(find.text('从作品导入'), findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.runAsync(
       () => Future<void>.delayed(const Duration(milliseconds: 150)),
@@ -1158,11 +1318,7 @@ void main() {
       expect(api.calls, 1);
       expect(find.byType(TaskStatusCard), findsOneWidget);
       expect(find.text('开始增强'), findsNothing);
-      final exportButton = find.ancestor(
-        of: find.text('导出'),
-        matching: find.byType(GlassButton),
-      );
-      expect(tester.widget<GlassButton>(exportButton).onTap, isNull);
+      expect(find.text('导出'), findsNothing);
       await tester.tap(find.text('传奇二瞬'));
       await tester.pump();
       expect(api.calls, 1);
@@ -1194,7 +1350,7 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 100));
       });
       await tester.pumpAndSettle();
-      expect(find.text('用示例照片体验'), findsOneWidget);
+      expect(find.text('从作品导入'), findsOneWidget);
       expect(find.byType(TaskStatusCard), findsNothing);
       expect(api.calls, 2);
       expect(store.artworks, isEmpty);

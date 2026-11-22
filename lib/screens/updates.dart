@@ -2,7 +2,7 @@ import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
-import 'package:path_provider/path_provider.dart';
+import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../core/store.dart';
@@ -48,7 +48,6 @@ class _UpdatesScreenState extends State<UpdatesScreen> {
   bool checking = false;
   ReleaseInfo? release;
   String? message;
-  String? downloadedPath;
   Future<void> check() async {
     setState(() {
       checking = true;
@@ -186,7 +185,23 @@ class _ReleaseCardState extends State<ReleaseCard> {
     super.dispose();
   }
 
-  Future<void> install() async {
+  @override
+  void initState() {
+    super.initState();
+    widget.service
+        .downloadedPackage(widget.release)
+        .then((path) {
+          if (mounted &&
+              token == null &&
+              downloadedPath == null &&
+              path != null) {
+            setState(() => downloadedPath = path);
+          }
+        })
+        .catchError((Object _) {});
+  }
+
+  Future<void> download() async {
     setState(() {
       token = CancelToken();
       message = null;
@@ -194,7 +209,7 @@ class _ReleaseCardState extends State<ReleaseCard> {
       total = 0;
     });
     try {
-      final path = await widget.service.downloadAndInstall(
+      final path = await widget.service.downloadPackage(
         widget.release,
         token!,
         (r, t) {
@@ -216,7 +231,7 @@ class _ReleaseCardState extends State<ReleaseCard> {
         setState(
           () => message = e is DioException && CancelToken.isCancel(e)
               ? '下载已取消'
-              : '下载或安装未完成。请检查网络；如系统要求，请允许“安装未知应用”后重试。',
+              : '下载未完成，请检查网络后重试。',
         );
       }
     } finally {
@@ -227,34 +242,37 @@ class _ReleaseCardState extends State<ReleaseCard> {
   @override
   Widget build(BuildContext context) => Glass(
     child: Column(
+      mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Text(
           '琉光 V${widget.release.version.replaceFirst(RegExp(r"^[vV]"), "")}',
           style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
         ),
-        const SizedBox(height: 8),
-        Text(
-          '为每一次创作，带来更好的体验',
-          style: TextStyle(fontSize: 12, color: muted(context)),
-        ),
-        const SizedBox(height: 18),
-        SizedBox(
-          height: 220,
-          child: SingleChildScrollView(
-            child: ReleaseNotesView(
-              notes: compareVersions(widget.release.version, appVersion) == 0
-                  ? releaseNotes
-                  : widget.release.notes,
+        const SizedBox(height: 12),
+        Flexible(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 260),
+            child: SingleChildScrollView(
+              primary: false,
+              child: ReleaseNotesView(
+                notes: widget.release.notes.trim().isEmpty
+                    ? '此版本暂无发布说明'
+                    : widget.release.notes,
+              ),
             ),
           ),
         ),
         const SizedBox(height: 16),
         if (token != null) ...[
-          LinearProgressIndicator(value: total > 0 ? received / total : null),
+          LinearProgressIndicator(
+            value: total > 0 ? (received / total).clamp(0, 1) : null,
+          ),
+          const SizedBox(height: 8),
           Text(
             '${(received / 1048576).toStringAsFixed(1)} MB${total > 0 ? ' / ${(total / 1048576).toStringAsFixed(1)} MB' : ''}',
           ),
+          const SizedBox(height: 12),
           GlassButton('取消下载', onTap: () => token?.cancel()),
         ] else if (downloadedPath != null)
           GlassButton(
@@ -265,17 +283,24 @@ class _ReleaseCardState extends State<ReleaseCard> {
               try {
                 await widget.service.installDownloaded(downloadedPath!);
                 if (mounted) setState(() => message = '已打开系统安装页面');
+              } on PlatformException catch (e) {
+                if (mounted)
+                  setState(() => message = e.message ?? '无法打开系统安装页面');
               } catch (_) {
-                if (mounted) setState(() => message = '安装包不存在，请重新下载');
+                if (mounted)
+                  setState(() {
+                    downloadedPath = null;
+                    message = '安装包不存在，请重新下载';
+                  });
               }
             },
           )
         else if (widget.release.apk != null)
           GlassButton(
-            '下载并安装',
+            '下载更新',
             primary: true,
             icon: Icons.system_update,
-            onTap: install,
+            onTap: download,
           )
         else
           const Text('此版本尚未提供可下载的 APK 附件'),
@@ -304,7 +329,8 @@ class _VersionLogState extends State<VersionLog> {
   Widget build(BuildContext context) => Column(
     children: [
       for (final entry in [
-        (appVersion, releaseNotes, '2026-11-19'),
+        (appVersion, releaseNotes, '2026-11-23'),
+        ('1.1.0', releaseNotesV110, '2026-11-19'),
         ('1.0.9', '修复：恢复历史作品与请求明细，新增自定义表情角色创建和 GIF 参数校验。', '2026-11-19'),
         ('1.0.8', releaseNotesV108, '2026-11-19'),
         ('1.0.7', releaseNotesV107, '2026-11-19'),
@@ -391,53 +417,143 @@ class DiagnosticsScreen extends StatefulWidget {
 
 class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
   late Future<String> log = AppLog.read();
+  int kind = 0;
   @override
   Widget build(BuildContext context) => SettingsDetail(
-    title: '诊断日志',
+    title: '日志详情',
     children: [
-      const Text('只记录事件、时间和状态码；不记录 Key、提示词、图片、接口地址和响应正文。最多保留 300 条。'),
+      Text(
+        '记录操作、应用状态与模型请求结果。保留 7 天，不记录 Key、地址、提示词、图片或响应正文。',
+        style: TextStyle(color: muted(context), height: 1.6),
+      ),
       const SizedBox(height: 16),
-      Row(
+      GlassSegments(
+        labels: const ['正常', '错误'],
+        selected: kind,
+        onChanged: (v) => setState(() => kind = v),
+      ),
+      const SizedBox(height: 14),
+      Wrap(
+        spacing: 10,
+        runSpacing: 10,
         children: [
-          Expanded(
-            child: GlassButton(
-              '导出',
-              onTap: () async {
-                final dir = await getTemporaryDirectory();
-                final file = File('${dir.path}/liuguang-diagnostics.jsonl');
-                await file.writeAsString(await AppLog.read());
-                await SharePlus.instance.share(
-                  ShareParams(files: [XFile(file.path)]),
-                );
-              },
-            ),
+          GlassButton(
+            '刷新',
+            icon: Icons.refresh_rounded,
+            onTap: () => setState(() => log = AppLog.read()),
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: GlassButton(
-              '清空',
-              onTap: () async {
-                if (!await confirm(
-                  context,
-                  '清空诊断日志？',
-                  '只清空本机诊断事件，不影响作品和使用明细。',
-                )) {
-                  return;
-                }
+          GlassButton(
+            '导出',
+            icon: Icons.ios_share_rounded,
+            onTap: () async {
+              final dir = await safeTemporaryDirectory();
+              final file = await File('${dir.path}/liuguang-diagnostics.jsonl')
+                  .writeAsString(await AppLog.read());
+              await SharePlus.instance.share(
+                ShareParams(files: [XFile(file.path)]),
+              );
+            },
+          ),
+          GlassButton(
+            '清空',
+            icon: Icons.delete_outline,
+            onTap: () async {
+              if (await confirm(context, '清空日志？', '将删除正常与错误两类日志。')) {
                 await AppLog.clear();
                 if (mounted) setState(() => log = AppLog.read());
-              },
-            ),
+              }
+            },
           ),
         ],
       ),
       const SizedBox(height: 16),
       FutureBuilder<String>(
         future: log,
-        builder: (_, snapshot) => StudioSelectable(
-          snapshot.data?.isNotEmpty == true ? snapshot.data! : '暂无日志',
-          style: const TextStyle(fontSize: 12, height: 1.6),
-        ),
+        builder: (context, snapshot) {
+          if (snapshot.hasError) return const Text('日志读取失败');
+          if (!snapshot.hasData) return const Text('正在读取日志…');
+          final entries = snapshot.data!
+              .trim()
+              .split('\n')
+              .reversed
+              .map(AppLog.parse)
+              .whereType<Map<String, dynamic>>()
+              .where((entry) {
+                final event = entry['event']?.toString() ?? '';
+                final error =
+                    entry['level'] == 'error' ||
+                    event.contains('failure') ||
+                    event.endsWith('_error');
+                return error == (kind == 1);
+              })
+              .toList();
+          if (entries.isEmpty) return Text(kind == 0 ? '暂无正常日志' : '暂无错误日志');
+          return SizedBox(
+            height: (MediaQuery.sizeOf(context).height * .58).clamp(200, 580),
+            child: ListView.separated(
+              primary: false,
+              itemCount: entries.length,
+              separatorBuilder: (_, _) => const SizedBox(height: 8),
+              itemBuilder: (context, i) {
+                final entry = entries[i];
+                final date = (entry['time']?.toString() ?? '')
+                    .replaceFirst('T', ' ')
+                    .split('.')
+                    .first;
+                final details = [
+                  date,
+                  if (entry['status'] != null) 'HTTP ${entry['status']}',
+                  if (entry['elapsedMs'] != null) '${entry['elapsedMs']} ms',
+                  if (entry['images'] != null) '${entry['images']} 张',
+                  if (entry['inputTokens'] != null ||
+                      entry['outputTokens'] != null)
+                    'Token ${entry['inputTokens'] ?? '—'}/${entry['outputTokens'] ?? '—'}',
+                ];
+                return Glass(
+                  blur: false,
+                  radius: 17,
+                  padding: const EdgeInsets.all(13),
+                  child: Row(
+                    children: [
+                      Icon(
+                        kind == 1
+                            ? Icons.error_outline
+                            : Icons.check_circle_outline,
+                        color: kind == 1
+                            ? Theme.of(context).colorScheme.error
+                            : accentInk(context),
+                        size: 19,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              entry['event']?.toString() ?? '',
+                              style: TextStyle(
+                                color: ink(context),
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              details.join(' · '),
+                              style: TextStyle(
+                                color: muted(context),
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          );
+        },
       ),
     ],
   );
@@ -506,10 +622,8 @@ Future<void> floatingRelease(BuildContext context, Widget child) =>
       context: context,
       builder: (ctx) => Dialog(
         backgroundColor: Colors.transparent,
-        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
-        child: StudioScope(
-          store: StudioScope.of(context),
-          child: SingleChildScrollView(child: child),
-        ),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+        constraints: const BoxConstraints(maxWidth: 480),
+        child: StudioScope(store: StudioScope.of(context), child: child),
       ),
     );

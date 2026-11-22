@@ -42,6 +42,7 @@ class AppStore extends ChangeNotifier {
     count: 1,
   );
   List<Artwork> artworks = [];
+  Iterable<Artwork> get visibleArtworks => artworks.where((art) => !art.hidden);
   List<UsageRecord> usage = [];
   List<ChatMessage> messages = [];
   String theme = 'system';
@@ -211,6 +212,10 @@ class AppStore extends ChangeNotifier {
   Future<void> addUsage(UsageRecord record) async {
     await AppLog.record(
       record.success ? 'model_request_success' : 'model_request_failure',
+      elapsedMs: record.milliseconds,
+      images: record.images,
+      inputTokens: record.inputTokens,
+      outputTokens: record.outputTokens,
     );
     usage.insert(0, record);
     await saveCatalog();
@@ -218,6 +223,10 @@ class AppStore extends ChangeNotifier {
 
   Future<void> setArtworkHidden(Iterable<String> ids, bool hidden) async {
     final target = ids.toSet();
+    await AppLog.record(
+      hidden ? 'artwork_hidden' : 'artwork_restored',
+      images: target.length,
+    );
     for (final art in artworks) {
       if (target.contains(art.id)) art.hidden = hidden;
     }

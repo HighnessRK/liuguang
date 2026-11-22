@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../core/api.dart';
 import '../core/imaging.dart';
@@ -19,6 +20,7 @@ class StorageSettings extends StatefulWidget {
 }
 
 class _StorageSettingsState extends State<StorageSettings> {
+  int logBytes = 0;
   int total = 0, works = 0, cache = 0, done = 0;
   final packages = <File>[];
   final selectedPackages = <String>{};
@@ -39,7 +41,10 @@ class _StorageSettingsState extends State<StorageSettings> {
     final retained = widget.store.artworks
         .map((a) => File(a.path).absolute.path)
         .toSet();
-    var t = 0, w = 0, c = 0;
+    final updates = UpdateService(widget.store);
+    final packagePath = updates.packageDirectory.absolute.path;
+    await AppLog.read();
+    var t = 0, w = 0, c = 0, logs = 0;
     disposable.clear();
     packages.clear();
     selectedPackages.clear();
@@ -51,8 +56,9 @@ class _StorageSettingsState extends State<StorageSettings> {
         if (entity is! File) continue;
         final size = await entity.length();
         t += size;
+        if (entity.path == AppLog.file?.path) logs += size;
         if (entity.path.toLowerCase().endsWith('.apk') &&
-            entity.path.contains('packages')) {
+            entity.parent.absolute.path == packagePath) {
           packages.add(entity);
         }
         if (retained.contains(entity.absolute.path)) {
@@ -67,6 +73,8 @@ class _StorageSettingsState extends State<StorageSettings> {
     } finally {
       if (mounted) {
         setState(() {
+          packages.sort((a, b) => b.path.compareTo(a.path));
+          logBytes = logs;
           total = t;
           works = w;
           cache = c;
@@ -210,6 +218,20 @@ class _StorageSettingsState extends State<StorageSettings> {
     }
   }
 
+  Future<void> deletePackages(List<File> targets) async {
+    if (busy || targets.isEmpty) return;
+    setState(() => busy = true);
+    try {
+      for (final file in targets) {
+        if (await file.exists()) await file.delete();
+      }
+    } catch (e) {
+      if (mounted) toast(context, '部分安装包无法删除');
+    } finally {
+      if (mounted) await scan();
+    }
+  }
+
   String mb(int value) => '${(value / 1048576).toStringAsFixed(1)} MB';
   @override
   Widget build(BuildContext context) => SettingsDetail(
@@ -262,6 +284,27 @@ class _StorageSettingsState extends State<StorageSettings> {
                 await scan();
               },
       ),
+      const SectionLabel('日志', caption: '自动保留 7 天'),
+      Glass(
+        padding: const EdgeInsets.all(14),
+        child: Row(
+          children: [
+            Expanded(child: Text('${(logBytes / 1024).toStringAsFixed(1)} KB')),
+            GlassButton(
+              '清理日志',
+              small: true,
+              onTap: busy || logBytes == 0
+                  ? null
+                  : () async {
+                      if (await confirm(context, '清理本机日志？', '正常与错误日志都将清除。')) {
+                        await AppLog.clear();
+                        if (mounted) await scan();
+                      }
+                    },
+            ),
+          ],
+        ),
+      ),
       const SectionLabel('安装包管理'),
       if (packages.isEmpty)
         Text(
@@ -274,37 +317,90 @@ class _StorageSettingsState extends State<StorageSettings> {
           child: Column(
             children: [
               for (final file in packages)
-                CheckboxListTile(
-                  dense: true,
-                  value: selectedPackages.contains(file.path),
-                  onChanged: (v) => setState(
-                    () => v == true
-                        ? selectedPackages.add(file.path)
-                        : selectedPackages.remove(file.path),
-                  ),
-                  title: Text(
-                    file.uri.pathSegments.last,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  subtitle: FutureBuilder<int>(
-                    future: file.length(),
-                    builder: (_, snap) =>
-                        Text(snap.hasData ? mb(snap.data!) : '读取中'),
-                  ),
-                  secondary: IconButton(
-                    tooltip: '安装',
-                    icon: const Icon(Icons.install_mobile_rounded),
-                    onPressed: () async {
-                      try {
-                        await UpdateService(widget.store)
-                            .installDownloaded(file.path);
-                      } catch (e) {
-                        if (mounted) toast(context, '安装包不存在或无法打开');
-                      }
-                    },
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        children: [
+                          GlassIcon(
+                            selectedPackages.contains(file.path)
+                                ? Icons.check_circle_rounded
+                                : Icons.circle_outlined,
+                            tooltip: '选择 ${file.uri.pathSegments.last}',
+                            onTap: busy
+                                ? null
+                                : () => setState(() {
+                                    if (!selectedPackages.add(file.path))
+                                      selectedPackages.remove(file.path);
+                                  }),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  file.uri.pathSegments.last,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                FutureBuilder<int>(
+                                  future: file.length(),
+                                  builder: (_, snap) => Text(
+                                    snap.hasData ? mb(snap.data!) : '—',
+                                    style: TextStyle(
+                                      color: muted(context),
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        alignment: WrapAlignment.end,
+                        children: [
+                          GlassButton(
+                            '安装',
+                            small: true,
+                            icon: Icons.install_mobile_rounded,
+                            onTap: busy
+                                ? null
+                                : () async {
+                                    try {
+                                      await UpdateService(widget.store)
+                                          .installDownloaded(file.path);
+                                    } on PlatformException catch (e) {
+                                      if (context.mounted)
+                                        toast(
+                                          context,
+                                          e.message ?? '无法打开系统安装页面',
+                                        );
+                                    } catch (_) {
+                                      if (context.mounted)
+                                        toast(context, '安装包不存在或无法打开');
+                                    }
+                                  },
+                          ),
+                          GlassButton(
+                            '删除',
+                            small: true,
+                            icon: Icons.delete_outline_rounded,
+                            onTap: busy ? null : () => deletePackages([file]),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
                 ),
+              const SizedBox(height: 10),
               Row(
                 children: [
                   Expanded(
@@ -323,15 +419,16 @@ class _StorageSettingsState extends State<StorageSettings> {
                     child: GlassButton(
                       '删除所选',
                       small: true,
-                      onTap: selectedPackages.isEmpty
+                      onTap: selectedPackages.isEmpty || busy
                           ? null
-                          : () async {
-                              for (final path in selectedPackages.toList()) {
-                                final f = File(path);
-                                if (await f.exists()) await f.delete();
-                              }
-                              await scan();
-                            },
+                          : () => deletePackages(
+                              packages
+                                  .where(
+                                    (file) =>
+                                        selectedPackages.contains(file.path),
+                                  )
+                                  .toList(),
+                            ),
                     ),
                   ),
                 ],
@@ -388,7 +485,7 @@ class _StorageSettingsState extends State<StorageSettings> {
       ),
       const SizedBox(height: 18),
       Text(
-        '统计当前应用内作品与数据文件。系统相册、安装包和系统管理的缓存不计入此处。',
+        '应用数据包含作品、更新安装包和其他应用文件。系统相册与系统管理的缓存不计入。',
         style: TextStyle(fontSize: 12, height: 1.7, color: muted(context)),
       ),
     ],

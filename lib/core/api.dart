@@ -9,6 +9,7 @@ import 'image_transport.dart';
 
 import 'models.dart';
 import 'store.dart';
+import 'updates.dart';
 
 class StudioException implements Exception {
   final String message;
@@ -151,7 +152,61 @@ class StudioApi {
                sendTimeout: const Duration(minutes: 3),
                headers: {'Accept': 'application/json'},
              ),
-           );
+           ) {
+    this.dio.interceptors.add(
+      InterceptorsWrapper(
+        onRequest: (options, handler) {
+          final path = options.uri.path;
+          final action = path.contains('/images/tasks/')
+              ? 'image_poll'
+              : path.endsWith('/images/edits')
+              ? 'image_edit'
+              : path.endsWith('/images/generations')
+              ? 'image_generate'
+              : path.endsWith('/chat/completions')
+              ? 'conversation'
+              : path.endsWith('/models')
+              ? 'model_inventory'
+              : 'image_transfer';
+          options.extra['studio_log_action'] = action;
+          options.extra['studio_log_clock'] = Stopwatch()..start();
+          // Polls have a response record. Skip a separate dispatch line for each poll.
+          if (action != 'image_poll') AppLog.record('model_${action}_request');
+          handler.next(options);
+        },
+        onResponse: (response, handler) {
+          _logResponse(response.requestOptions, response.statusCode);
+          handler.next(response);
+        },
+        onError: (failure, handler) {
+          _logResponse(
+            failure.requestOptions,
+            failure.response?.statusCode,
+            failure: failure.type.name,
+          );
+          handler.next(failure);
+        },
+      ),
+    );
+  }
+
+  void _logResponse(RequestOptions options, int? status, {String? failure}) {
+    final action = options.extra['studio_log_action'] as String?;
+    if (action == null) return;
+    final watch = options.extra['studio_log_clock'] as Stopwatch?;
+    final suffix = failure == null
+        ? 'reply'
+        : failure.replaceAllMapped(
+            RegExp(r'[A-Z]'),
+            (m) => '_${m[0]!.toLowerCase()}',
+          );
+    AppLog.record(
+      'model_${action}_$suffix',
+      status: status,
+      elapsedMs: watch?.elapsedMilliseconds,
+      error: failure != null && failure != 'cancel',
+    );
+  }
 
   Options _auth(EndpointConfig c) =>
       Options(headers: {'Authorization': 'Bearer ${c.key}'});

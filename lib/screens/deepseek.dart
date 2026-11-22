@@ -2,16 +2,35 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show compute;
 import 'package:flutter/services.dart';
 
 import '../core/api.dart';
 import '../core/imaging.dart';
 import '../core/models.dart';
 import '../core/store.dart';
+import '../core/updates.dart';
 import '../ui/glass.dart';
 import 'custom_sticker.dart';
+
+const _fishAsset = 'assets/deepseek/fish_reference.jpg';
+const _fish = StickerProfile(
+  id: 'fish',
+  name: '大肥鱼娘',
+  description: '保持蓝发、女仆装、鱼尾和统一角色设计。',
+  references: [],
+);
+
+GenerationOptions stickerOptions(bool animated) => animated
+    ? GenerationOptions(
+        width: 512,
+        height: 512,
+        format: 'gif',
+        advanced: {'frame_count': 8, 'frame_duration_ms': 150},
+      )
+    : GenerationOptions(width: 4096, height: 4096, format: 'jpeg');
 
 class DeepSeekStickerScreen extends StatefulWidget {
   final AppStore store;
@@ -28,29 +47,21 @@ class DeepSeekStickerScreen extends StatefulWidget {
 class _DeepSeekStickerScreenState extends State<DeepSeekStickerScreen> {
   final text = TextEditingController();
   bool animated = false, busy = false;
-  double progress = 0;
-  int seconds = 0;
+  double? progress;
+  final elapsed = Stopwatch();
   Timer? timer;
   CancelToken? token;
   String stage = '等待生成';
-  List<StickerProfile> profiles = [];
-  StickerProfile? selectedProfile;
+  late StickerProfile profile;
   @override
   void initState() {
     super.initState();
-    final raw = widget.store.prefs.getStringList('sticker_profiles') ?? [];
-    profiles = raw
-        .map((v) {
-          try {
-            return StickerProfile.fromJson(jsonDecode(v));
-          } catch (_) {
-            return null;
-          }
-        })
-        .whereType<StickerProfile>()
-        .toList();
-    final selectedId = widget.store.prefs.getString('last_sticker_profile');
-    selectedProfile = profiles.where((p) => p.id == selectedId).firstOrNull;
+    final id = widget.store.prefs.getString('last_sticker_profile');
+    profile =
+        readStickerProfiles(widget.store)
+            .where((p) => p.id == id)
+            .firstOrNull ??
+        _fish;
   }
 
   @override
@@ -61,296 +72,333 @@ class _DeepSeekStickerScreenState extends State<DeepSeekStickerScreen> {
     super.dispose();
   }
 
-  Future<String> referencePath() async {
-    final data = await rootBundle.load('assets/deepseek/fish_reference.jpg');
+  Future<void> editCharacter([StickerProfile? existing]) async {
+    final edited = await Navigator.push<StickerProfile>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => StickerCharacterCreatorScreen(
+          store: widget.store,
+          api: widget.api,
+          profile: existing,
+        ),
+      ),
+    );
+    if (mounted && edited != null) await selectProfile(edited);
+  }
+
+  Future<void> selectProfile(StickerProfile value) async {
+    setState(() => profile = value);
+    await widget.store.prefs.setString('last_sticker_profile', value.id);
+    await AppLog.record('sticker_character_selected');
+  }
+
+  Future<void> manageCharacters() async {
+    final profiles = [_fish, ...readStickerProfiles(widget.store)];
+    final choice = await glassSheet<(String, StickerProfile)>(
+      context,
+      Builder(
+        builder: (sheetContext) => Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const SectionLabel('表情角色管理'),
+            for (final item in profiles)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Glass(
+                  padding: const EdgeInsets.all(10),
+                  blur: false,
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          item.id == _fish.id
+                              ? 'DeepSeek 大肥鱼娘 · 内置'
+                              : item.name,
+                        ),
+                      ),
+                      GlassIcon(
+                        item.id == profile.id
+                            ? Icons.check_circle_rounded
+                            : Icons.arrow_forward_rounded,
+                        tooltip: '选用${item.name}',
+                        onTap: () =>
+                            Navigator.pop(sheetContext, ('select', item)),
+                      ),
+                      if (item.id != _fish.id) ...[
+                        const SizedBox(width: 8),
+                        GlassIcon(
+                          Icons.edit_outlined,
+                          tooltip: '编辑${item.name}',
+                          onTap: () =>
+                              Navigator.pop(sheetContext, ('edit', item)),
+                        ),
+                        const SizedBox(width: 8),
+                        GlassIcon(
+                          Icons.delete_outline_rounded,
+                          tooltip: '删除${item.name}',
+                          onTap: () =>
+                              Navigator.pop(sheetContext, ('delete', item)),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || choice == null) return;
+    final (action, item) = choice;
+    switch (action) {
+      case 'select':
+        await selectProfile(item);
+      case 'edit':
+        await editCharacter(item);
+      case 'delete':
+        if (!await confirm(context, '删除「${item.name}」？', '已生成的表情包仍保存在作品中。'))
+          return;
+        final remaining = readStickerProfiles(widget.store)
+          ..removeWhere((p) => p.id == item.id);
+        await widget.store.prefs.setStringList(
+          'sticker_profiles',
+          remaining.map((p) => jsonEncode(p.toJson())).toList(),
+        );
+        if (widget.store.prefs.getString('last_sticker_profile') == item.id) {
+          await widget.store.prefs.remove('last_sticker_profile');
+        }
+        if (mounted && profile.id == item.id) await selectProfile(_fish);
+        await AppLog.record('sticker_character_deleted');
+    }
+  }
+
+  Future<List<String>> referencePaths() async {
+    if (profile.id != _fish.id) {
+      if (profile.references.isEmpty ||
+          profile.references.any((path) => !File(path).existsSync())) {
+        throw StudioException('角色参考图已失效，请在角色管理中重新添加三视图');
+      }
+      return profile.references;
+    }
+    final data = await rootBundle.load(_fishAsset);
     final dir = await safeTemporaryDirectory();
-    final file = File('${dir.path}/deepseek-fish-reference.jpg');
-    await file.writeAsBytes(data.buffer.asUint8List());
-    return file.path;
+    return [
+      (await File('${dir.path}/deepseek-fish-reference.jpg').writeAsBytes(
+        data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
+      )).path,
+    ];
   }
 
   Future<void> generate() async {
-    if (busy || text.text.trim().isEmpty) return;
-    if (!widget.store.imageApi.ready || !widget.store.chatApi.ready) {
+    if (busy) return;
+    final caption = text.text.trim();
+    if (caption.isEmpty) {
+      toast(context, '请先填写表情文本');
+      return;
+    }
+    final config = widget.store.imageApi.snapshot();
+    if (!config.ready || !widget.store.chatApi.ready) {
       toast(context, '请先配置生图和对话模型');
       return;
     }
+    if (animated &&
+        (!supportsNativeGif(config.model) ||
+            config.protocol != ApiProtocol.gptImage)) {
+      toast(context, '动图需要支持原生 GIF 的模型和 GPT Image 图片协议');
+      return;
+    }
+    final cancel = token = CancelToken();
+    final options = stickerOptions(animated);
+    final kind = '${profile.name}${animated ? '动图' : ''}表情包';
     setState(() {
       busy = true;
-      seconds = 0;
-      timer?.cancel();
-      timer = Timer.periodic(const Duration(seconds: 1), (_) {
-        if (mounted) setState(() => seconds++);
-      });
-      stage = '对话模型正在理解表情文本';
-      progress = .08;
+      progress = null;
+      stage = '正在理解表情文本';
     });
-    token = CancelToken();
+    elapsed
+      ..reset()
+      ..start();
+    timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
     try {
+      await beginProcessing();
+      final references = await referencePaths();
       final brief = await widget.api.chat([
         ChatMessage(
           'user',
-          '''请把以下表情包文字设计成画面指令，保留大肥鱼娘基本形象，明确动作、道具、表情、构图和文字位置。只输出生图模型可执行的中文提示词。
-${text.text.trim()}
-角色设定：${selectedProfile?.description ?? '保持大肥鱼娘固定形象'}''',
+          '设计表情包画面指令，明确动作、道具、表情、构图和文字位置。只输出生图提示词。\n角色设定：${profile.description}\n表情文字：$caption',
         ),
-      ], cancelToken: token);
-      final paths = selectedProfile?.references.isNotEmpty == true
-          ? selectedProfile!.references
-          : [await referencePath()];
-      setState(() {
-        stage = animated ? '生图模型正在生成动图' : '生图模型正在生成表情包';
-        progress = .25;
-      });
-      final options = animated
-          ? GenerationOptions(
-              width: 512,
-              height: 512,
-              format: 'gif',
-              quality: 'high',
-              count: 1,
-              advanced: {'frame_count': 8, 'frame_duration_ms': 150},
-            )
-          : GenerationOptions(
-              width: 4096,
-              height: 4096,
-              format: 'jpeg',
-              quality: 'high',
-            );
+      ], cancelToken: cancel);
+      if (!mounted || cancel.isCancelled) return;
       final reply = await widget.api.generate(
         prompt:
-            '''$brief
-画面文字：${text.text.trim()}
-保持蓝发、女仆装、鱼尾和统一角色设计，保持帧间一致性，smooth motion，consistent character，帧间一致性约束，画面铺满画布，不要白边。''',
+            '$brief\n角色设定：${profile.description}\n画面文字：$caption\n'
+            '$stickerProps。smooth motion, consistent character。保持帧间一致性，统一角色外形、服装、配色、构图和文字位置。画面铺满画布，去除白边。',
         options: options,
-        inputs: paths,
-        cancelToken: token,
-        operation: animated ? 'DeepSeek 动图表情包' : 'DeepSeek 静态表情包',
-        onStage: (v) {
+        inputs: references,
+        cancelToken: cancel,
+        operation: kind,
+        onStage: (value) {
           if (mounted)
             setState(() {
-              stage = v;
-              progress = stageProgress(v) ?? progress;
+              stage = value;
+              progress = stageProgress(value) ?? progress;
             });
         },
       );
+      if (!mounted || cancel.isCancelled) return;
       setState(() {
-        progress = 1;
-        stage = '已生成，已保存到作品';
+        stage = '正在校验并保存';
+        progress = null;
       });
-      for (final bytes in reply.images) {
-        await saveArtwork(
-          widget.store,
-          bytes,
-          prompt: text.text.trim(),
-          model: widget.store.imageApi.model,
-          kind: animated ? 'DeepSeek 动图表情包' : 'DeepSeek 表情包',
-          format: animated ? 'gif' : 'jpeg',
-        );
-      }
-      if (mounted) {
-        toast(context, '已保存到作品');
-        Navigator.of(context).popUntil((route) => route.isFirst);
-      }
+      final bytes = reply.images.first;
+      if (animated) await compute(validateStickerGif, bytes);
+      final artwork = await saveArtwork(
+        widget.store,
+        bytes,
+        prompt: caption,
+        model: config.model,
+        kind: kind,
+        format: options.format,
+        parameters: options.toJson(),
+      );
+      await widget.store.prefs.setString('last_sticker_profile', profile.id);
+      if (mounted) Navigator.pop(context, artwork);
     } catch (e) {
       if (mounted) toast(context, describeError(e));
     } finally {
+      elapsed.stop();
       timer?.cancel();
+      await endProcessing();
       if (mounted) setState(() => busy = false);
     }
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    body: StudioBackground(
-      child: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(24, 8, 24, 30),
-          children: [
-            PageHeader(
-              title: 'DeepSeek 表情包',
-              action: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  GlassIcon(
-                    Icons.swap_horiz_rounded,
-                    tooltip: '切换表情角色',
-                    onTap: busy
-                        ? null
-                        : () async {
-                            final picked = await glassSheet<StickerProfile>(
-                              context,
-                              Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  const Text(
-                                    '选择表情角色',
-                                    style: TextStyle(
-                                      fontSize: 20,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 12),
-                                  ListTile(
-                                    title: const Text('DeepSeek 大肥鱼娘'),
-                                    onTap: () => Navigator.pop(context, null),
-                                  ),
-                                  for (final p in profiles)
-                                    ListTile(
-                                      title: Text(p.name),
-                                      onTap: () => Navigator.pop(context, p),
-                                    ),
-                                ],
-                              ),
-                            );
-                            if (picked != null) {
-                              setState(() => selectedProfile = picked);
-                              await widget.store.prefs.setString(
-                                'last_sticker_profile',
-                                picked.id,
-                              );
-                            }
-                          },
-                  ),
-                  const SizedBox(width: 6),
-                  GlassIcon(
-                    Icons.person_add_alt_1_rounded,
-                    tooltip: '创建表情角色',
-                    onTap: busy
-                        ? null
-                        : () => Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => StickerCharacterCreatorScreen(
-                                store: widget.store,
-                                api: widget.api,
-                              ),
-                            ),
-                          ),
-                  ),
-                  const SizedBox(width: 8),
-                  GlassIcon(
-                    Icons.arrow_back_rounded,
-                    tooltip: '返回',
-                    onTap: () => Navigator.pop(context),
-                  ),
-                ],
-              ),
-            ),
-            Glass(
-              child: Row(
-                children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(16),
-                    child: SizedBox(
-                      width: 170,
-                      height: 112,
-                      child: ZoomableImage(
-                        image: const AssetImage(
-                          'assets/deepseek/fish_reference.jpg',
-                        ),
-                        child: ColoredBox(
-                          color: Colors.white,
-                          child: Image.asset(
-                            'assets/deepseek/fish_reference.jpg',
-                            fit: BoxFit.contain,
-                          ),
-                        ),
-                      ),
+  Widget build(BuildContext context) {
+    final images = profile.id == _fish.id
+        ? <ImageProvider>[const AssetImage(_fishAsset)]
+        : profile.references.map((path) => FileImage(File(path))).toList();
+    return Scaffold(
+      body: StudioBackground(
+        child: SafeArea(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(24, 8, 24, 30),
+            children: [
+              PageHeader(
+                title: profile.id == _fish.id ? 'DeepSeek 表情包' : '表情包',
+                action: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    GlassIcon(
+                      Icons.swap_horiz_rounded,
+                      tooltip: '表情角色管理',
+                      onTap: busy ? null : manageCharacters,
                     ),
-                  ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Text(
-                      '''${selectedProfile?.name ?? '大肥鱼娘'}
-固定角色参考''',
-                      style: TextStyle(
+                    const SizedBox(width: 8),
+                    GlassIcon(
+                      Icons.person_add_alt_1_rounded,
+                      tooltip: '创建表情角色',
+                      onTap: busy ? null : editCharacter,
+                    ),
+                    const SizedBox(width: 8),
+                    GlassIcon(
+                      Icons.arrow_back_rounded,
+                      tooltip: '返回',
+                      onTap: () => Navigator.pop(context),
+                    ),
+                  ],
+                ),
+              ),
+              Glass(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      '${profile.name} · 固定角色参考',
+                      style: const TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w600,
-                        height: 1.5,
                       ),
                     ),
-                  ),
-                ],
-              ),
-            ),
-            const SectionLabel('表情文本'),
-            GlassField(
-              controller: text,
-              hint: '例如：今天也要元气满满',
-              minLines: 3,
-              maxLines: 5,
-            ),
-            const SectionLabel('生成类型'),
-            GlassSegments(
-              labels: ['静态 1:1 · 4K', '动图 1:1 · 512'],
-              selected: animated ? 1 : 0,
-              onChanged: busy
-                  ? (_) {}
-                  : (v) => setState(() => animated = v == 1),
-            ),
-            const SizedBox(height: 18),
-            Glass(
-              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-              child: Row(
-                children: [
-                  const Expanded(
-                    child: Text(
-                      '动图模式',
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
+                    if (images.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        height: 128,
+                        child: Row(
+                          children: [
+                            for (var i = 0; i < images.length; i++) ...[
+                              if (i > 0) const SizedBox(width: 8),
+                              Expanded(
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(14),
+                                  child: ZoomableImage(
+                                    image: images[i],
+                                    child: Image(
+                                      image: images[i],
+                                      fit: BoxFit.contain,
+                                      errorBuilder: (_, _, _) => const Center(
+                                        child: Icon(
+                                          Icons.broken_image_outlined,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
                       ),
-                    ),
-                  ),
-                  GlassToggle(
-                    value: animated,
-                    onChanged: busy
-                        ? (_) {}
-                        : (v) => setState(() => animated = v),
-                  ),
-                ],
-              ),
-            ),
-            if (animated) ...[
-              const SizedBox(height: 10),
-              Glass(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 11,
-                ),
-                child: Text(
-                  '固定 8 帧 · 每帧 150 ms · smooth motion · consistent character · 帧间一致性',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: muted(context),
-                    height: 1.5,
-                  ),
+                    ],
+                  ],
                 ),
               ),
-            ],
-            if (busy) ...[
-              const SizedBox(height: 18),
-              TaskStatusCard(
-                title: animated ? 'DeepSeek 动图ing' : 'DeepSeek 表情包ing',
-                stage: stage,
-                progress: progress,
-                seconds: seconds,
-                onCancel: () => token?.cancel(),
+              const SectionLabel('表情文本'),
+              GlassField(
+                controller: text,
+                readOnly: busy,
+                hint: '例如：今天也要元气满满',
+                minLines: 3,
+                maxLines: 5,
               ),
-            ],
-            const SizedBox(height: 18),
-            SizedBox(
-              width: double.infinity,
-              child: GlassButton(
-                '生成表情包',
-                icon: Icons.auto_awesome_rounded,
-                onTap: busy ? null : generate,
+              const SectionLabel('生成类型'),
+              GlassSegments(
+                labels: const ['静态 · 4K JPEG', '动图 · 512 GIF'],
+                selected: animated ? 1 : 0,
+                onChanged: (i) {
+                  if (!busy) setState(() => animated = i == 1);
+                },
               ),
-            ),
-          ],
+              if (animated) ...[
+                const SizedBox(height: 12),
+                Text(
+                  '512 × 512 · 8 帧 · 每帧 150 ms',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: muted(context)),
+                ),
+              ],
+              const SizedBox(height: 20),
+              if (busy)
+                TaskStatusCard(
+                  title: animated ? '正在生成动图' : '正在生成表情包',
+                  stage: stage,
+                  seconds: elapsed.elapsed.inSeconds,
+                  progress: progress,
+                  onCancel: () => token?.cancel(),
+                )
+              else
+                GlassButton(
+                  '生成表情包',
+                  primary: true,
+                  icon: Icons.auto_awesome_rounded,
+                  onTap: generate,
+                ),
+            ],
+          ),
         ),
       ),
-    ),
-  );
+    );
+  }
 }

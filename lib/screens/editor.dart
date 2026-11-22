@@ -15,6 +15,7 @@ import '../core/imaging.dart';
 import '../core/models.dart';
 import '../core/store.dart';
 import '../ui/glass.dart';
+import 'library.dart' show pickArtworkPaths;
 
 class EditorScreen extends StatefulWidget {
   final AppStore store;
@@ -80,12 +81,13 @@ class _EditorScreenState extends State<EditorScreen>
       taskSeconds = 0;
       taskProgress = null;
     });
+    final elapsed = Stopwatch()..start();
     taskTicker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted || !busy) {
         taskTicker?.cancel();
         return;
       }
-      setState(() => taskSeconds++);
+      setState(() => taskSeconds = elapsed.elapsed.inSeconds);
     });
   }
 
@@ -992,11 +994,18 @@ class _EditorScreenState extends State<EditorScreen>
                 ),
                 const SizedBox(height: 14),
                 GlassButton(
-                  '用示例照片体验',
-                  small: true,
-                  onTap: () async {
-                    await load(await widget.store.demoImage());
-                  },
+                  '从作品导入',
+                  icon: Icons.collections_outlined,
+                  onTap: loading
+                      ? null
+                      : () async {
+                          final paths = await pickArtworkPaths(
+                            context,
+                            widget.store,
+                          );
+                          if (mounted && paths.isNotEmpty)
+                            await load(paths.first);
+                        },
                 ),
               ],
             ),
@@ -1032,15 +1041,6 @@ class _EditorScreenState extends State<EditorScreen>
               ),
               const SizedBox(height: 14),
               photoPreview((bounds.maxHeight * .25).clamp(100.0, 220.0)),
-              if (token != null)
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: GlassButton('关闭图片', small: true, onTap: closeImage),
-                ),
-              Align(
-                alignment: Alignment.centerRight,
-                child: GlassButton('导出', primary: true, small: true),
-              ),
             ],
           );
         }

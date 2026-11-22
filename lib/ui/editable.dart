@@ -8,7 +8,7 @@ class StudioEditable extends StatelessWidget {
   final TextEditingController controller;
   final String hint;
   final int minLines, maxLines;
-  final bool obscure;
+  final bool obscure, readOnly;
   final TextInputType? keyboard;
   final ValueChanged<String>? onChanged;
   final Widget? suffix;
@@ -19,6 +19,7 @@ class StudioEditable extends StatelessWidget {
     this.minLines = 1,
     this.maxLines = 1,
     this.obscure = false,
+    this.readOnly = false,
     this.keyboard,
     this.onChanged,
     this.suffix,
@@ -35,6 +36,7 @@ class StudioEditable extends StatelessWidget {
       minLines: obscure ? 1 : minLines,
       maxLines: obscure ? 1 : maxLines,
       obscureText: obscure,
+      readOnly: readOnly,
       textAlignVertical: maxLines > 1
           ? TextAlignVertical.top
           : TextAlignVertical.center,

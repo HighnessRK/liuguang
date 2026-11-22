@@ -319,6 +319,19 @@ Future<Artwork> saveArtwork(
   return art;
 }
 
+void validateStickerGif(Uint8List bytes) {
+  final decoder = img.GifDecoder();
+  final info = decoder.startDecode(bytes);
+  if (info == null ||
+      info.width != 512 ||
+      info.height != 512 ||
+      info.numFrames != 8 ||
+      info.frames.any((frame) => frame.duration != 15) ||
+      decoder.decode(bytes) == null) {
+    throw StudioException('服务端未返回 512 × 512、8 帧、每帧 150 ms 的有效 GIF');
+  }
+}
+
 Uint8List encodeAnimation(Map<String, dynamic> job) {
   img.Decoder.defaultMaxPixels = 48000000;
   final frames = (job['frames'] as List).cast<Uint8List>();

@@ -97,7 +97,7 @@ class SettingsScreen extends StatelessWidget {
               context,
               Icons.storage_rounded,
               '存储管理',
-              '作品体积与临时缓存',
+              '作品体积、临时缓存与安装包',
               () => open(context, StorageSettings(store: store)),
             ),
             _line(context),
@@ -980,6 +980,17 @@ class AboutStudio extends StatelessWidget {
                 MaterialPageRoute(
                   builder: (_) => UpdatesScreen(store: StudioScope.of(context)),
                 ),
+              ),
+            ),
+            _line(context),
+            settingRow(
+              context,
+              Icons.receipt_long_outlined,
+              '日志详情',
+              '正常与错误记录',
+              () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const DiagnosticsScreen()),
               ),
             ),
             _line(context),

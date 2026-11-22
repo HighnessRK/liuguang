@@ -93,3 +93,6 @@ tasks.withType<JavaCompile>().configureEach {
         }
     }
 }
+
+// Official ITGSA SharedViewDemo local AAR channel, pinned for repeatable builds.
+dependencies { implementation(files("libs/sharedview-kit-1.0.0.5.aar")) }

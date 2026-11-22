@@ -11,7 +11,6 @@ import 'package:liquid_glass_renderer/liquid_glass_renderer.dart';
 import 'package:flutter/foundation.dart';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show PaintingContextCallback;
 import 'package:flutter/services.dart';
 import 'package:flutter/scheduler.dart';
 
@@ -60,12 +59,17 @@ Future<void> main() async {
     FlutterError.presentError(details);
     unawaited(AppLog.record('flutter_framework_error'));
   };
+  ui.PlatformDispatcher.instance.onError = (error, stack) {
+    unawaited(AppLog.record('unhandled_app_error'));
+    return false;
+  };
   runApp(LiuguangApp(store: store));
 }
 
 class LiuguangApp extends StatelessWidget {
   final AppStore store;
   final StudioApi? api;
+  static final _routeLog = _StudioRouteLog();
   const LiuguangApp({super.key, required this.store, this.api});
   @override
   Widget build(BuildContext context) => StudioScope(
@@ -79,6 +83,7 @@ class LiuguangApp extends StatelessWidget {
         localizationsDelegates: GlobalMaterialLocalizations.delegates,
         debugShowCheckedModeBanner: false,
         scrollBehavior: const StudioScrollBehavior(),
+        navigatorObservers: [_routeLog],
         themeMode: switch (store.theme) {
           'light' => ThemeMode.light,
           'dark' => ThemeMode.dark,
@@ -174,6 +179,28 @@ mx.MiuixThemeData studioMiuixTheme(BuildContext context, AppStore store) {
   );
 }
 
+class _StudioRouteLog extends NavigatorObserver {
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    unawaited(
+      AppLog.record(
+        route.settings.name == 'artwork_detail'
+            ? 'artwork_detail_open'
+            : route is PopupRoute
+            ? 'dialog_open'
+            : 'page_open',
+      ),
+    );
+  }
+
+  @override
+  void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    unawaited(
+      AppLog.record(route is PopupRoute ? 'dialog_close' : 'page_close'),
+    );
+  }
+}
+
 class StudioHome extends StatefulWidget {
   final AppStore store;
   final StudioApi? api;
@@ -202,6 +229,7 @@ class _StudioHomeState extends State<StudioHome> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    unawaited(AppLog.record('app_${state.name}'));
     if (state == AppLifecycleState.resumed) checkUpdates();
   }
 
@@ -287,6 +315,19 @@ class _StudioHomeState extends State<StudioHome> with WidgetsBindingObserver {
                                 initialPrompt: reusedPrompt,
                                 onSettings: () => setState(() => index = 3),
                                 onEdit: edit,
+                                onOpenLibrary: (art) {
+                                  setState(() => index = 2);
+                                  openArtwork(
+                                    context,
+                                    widget.store,
+                                    art,
+                                    edit,
+                                    onReuse: (prompt) => setState(() {
+                                      reusedPrompt = prompt;
+                                      index = 0;
+                                    }),
+                                  );
+                                },
                               ),
                               EditorScreen(
                                 key: ValueKey(editorRevision),
@@ -343,7 +384,20 @@ class _StudioHomeState extends State<StudioHome> with WidgetsBindingObserver {
                   bottom: MediaQuery.paddingOf(context).bottom + 14,
                   child: LiquidNavigation(
                     selected: index,
-                    onChanged: (i) => setState(() => index = i),
+                    onChanged: (i) {
+                      if (index == i) return;
+                      unawaited(
+                        AppLog.record(
+                          const [
+                            'create_tab_open',
+                            'editor_tab_open',
+                            'library_tab_open',
+                            'settings_tab_open',
+                          ][i],
+                        ),
+                      );
+                      setState(() => index = i);
+                    },
                   ),
                 ),
             ],
@@ -370,6 +424,10 @@ class StudioScrollBehavior extends MaterialScrollBehavior {
 class StudioPageTransitions extends PageTransitionsBuilder {
   const StudioPageTransitions();
   @override
+  Duration get transitionDuration => const Duration(milliseconds: 225);
+  @override
+  Duration get reverseTransitionDuration => const Duration(milliseconds: 190);
+  @override
   Widget buildTransitions<T>(
     PageRoute<T> route,
     BuildContext context,
@@ -378,151 +436,15 @@ class StudioPageTransitions extends PageTransitionsBuilder {
     Widget child,
   ) {
     if (MediaQuery.disableAnimationsOf(context)) return child;
-    return _StudioRouteTransition(
-      animation: animation,
-      secondaryAnimation: secondaryAnimation,
-      allowSnapshotting: route.allowSnapshotting,
-      child: child,
+    final eased = animation.drive(CurveTween(curve: Curves.easeOutCubic));
+    return FadeTransition(
+      opacity: animation.drive(Tween(begin: .65, end: 1.0)),
+      child: SlideTransition(
+        position: eased.drive(
+          Tween(begin: const Offset(.07, 0), end: Offset.zero),
+        ),
+        child: RepaintBoundary(child: child),
+      ),
     );
-  }
-}
-
-// Freeze the expensive glass pass only for the bounded page transition.
-// Release the texture at either endpoint; in-page glass stays fully live.
-class _StudioRouteTransition extends StatefulWidget {
-  final Animation<double> animation, secondaryAnimation;
-  final bool allowSnapshotting;
-  final Widget child;
-  const _StudioRouteTransition({
-    required this.animation,
-    required this.secondaryAnimation,
-    required this.allowSnapshotting,
-    required this.child,
-  });
-  @override
-  State<_StudioRouteTransition> createState() => _StudioRouteTransitionState();
-}
-
-class _StudioRouteTransitionState extends State<_StudioRouteTransition> {
-  final snapshot = SnapshotController();
-  late Animation<Offset> position;
-  late CurvedAnimation curve;
-  late _StudioSlidePainter painter;
-
-  void updateSnapshot(AnimationStatus _) {
-    snapshot.allowSnapshotting =
-        !kIsWeb &&
-        widget.allowSnapshotting &&
-        (widget.animation.status.isAnimating ||
-            widget.secondaryAnimation.status.isAnimating);
-  }
-
-  void attach() {
-    curve = CurvedAnimation(
-      parent: widget.animation,
-      curve: Curves.easeOutCubic,
-      reverseCurve: Curves.easeOutCubic,
-    );
-    position = Tween(
-      begin: const Offset(1, 0),
-      end: Offset.zero,
-    ).animate(curve);
-    painter = _StudioSlidePainter(position);
-    widget.animation.addStatusListener(updateSnapshot);
-    widget.secondaryAnimation.addStatusListener(updateSnapshot);
-    updateSnapshot(widget.animation.status);
-  }
-
-  void detach(_StudioRouteTransition previous) {
-    previous.animation.removeStatusListener(updateSnapshot);
-    previous.secondaryAnimation.removeStatusListener(updateSnapshot);
-    painter.dispose();
-    curve.dispose();
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    attach();
-  }
-
-  @override
-  void didUpdateWidget(covariant _StudioRouteTransition oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.animation != widget.animation ||
-        oldWidget.secondaryAnimation != widget.secondaryAnimation) {
-      detach(oldWidget);
-      attach();
-    } else {
-      updateSnapshot(widget.animation.status);
-    }
-  }
-
-  @override
-  void dispose() {
-    detach(widget);
-    snapshot.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => SnapshotWidget(
-    controller: snapshot,
-    painter: painter,
-    mode: SnapshotMode.permissive,
-    autoresize: true,
-    child: RepaintBoundary(child: widget.child),
-  );
-}
-
-// Transform the resulting texture, not the capture's widget coordinates.
-// Liquid glass computes its sampling clip in global coordinates; translating
-// the capture itself while rasterizing it at (0, 0) clips the wrong region.
-class _StudioSlidePainter extends SnapshotPainter {
-  final Animation<Offset> position;
-  _StudioSlidePainter(this.position) {
-    position.addListener(notifyListeners);
-  }
-
-  @override
-  void paint(
-    PaintingContext context,
-    Offset offset,
-    Size size,
-    PaintingContextCallback painter,
-  ) {
-    context.pushTransform(
-      true,
-      offset,
-      Matrix4.translationValues(size.width * position.value.dx, 0, 0),
-      painter,
-    );
-  }
-
-  @override
-  void paintSnapshot(
-    PaintingContext context,
-    Offset offset,
-    Size size,
-    ui.Image image,
-    Size imageSize,
-    double pixelRatio,
-  ) {
-    context.canvas.drawImageRect(
-      image,
-      Offset.zero & imageSize,
-      (offset + Offset(size.width * position.value.dx, 0)) & size,
-      Paint()..filterQuality = FilterQuality.low,
-    );
-  }
-
-  @override
-  bool shouldRepaint(covariant _StudioSlidePainter oldPainter) =>
-      oldPainter.position != position;
-
-  @override
-  void dispose() {
-    position.removeListener(notifyListeners);
-    super.dispose();
   }
 }

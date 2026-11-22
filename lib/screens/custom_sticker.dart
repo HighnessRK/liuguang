@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -8,7 +7,7 @@ import 'package:image_picker/image_picker.dart';
 
 import '../core/api.dart';
 import '../core/models.dart';
-import '../core/imaging.dart';
+import 'library.dart' show pickArtworkPaths;
 import '../core/store.dart';
 import '../ui/glass.dart';
 
@@ -40,10 +39,12 @@ class StickerProfile {
 class StickerCharacterCreatorScreen extends StatefulWidget {
   final AppStore store;
   final StudioApi api;
+  final StickerProfile? profile;
   const StickerCharacterCreatorScreen({
     super.key,
     required this.store,
     required this.api,
+    this.profile,
   });
   @override
   State<StickerCharacterCreatorScreen> createState() =>
@@ -52,13 +53,18 @@ class StickerCharacterCreatorScreen extends StatefulWidget {
 
 class _StickerCharacterCreatorScreenState
     extends State<StickerCharacterCreatorScreen> {
-  final name = TextEditingController(text: '我的表情角色');
-  final description = TextEditingController();
-  final references = <String>[];
-  bool polishing = false, saving = false;
+  late final name = TextEditingController(text: widget.profile?.name);
+  late final description = TextEditingController(
+    text: widget.profile?.description,
+  );
+  late final references = [...?widget.profile?.references];
+  bool polishing = false, analyzing = false, saving = false;
+  bool get busy => polishing || analyzing || saving;
+  CancelToken? token;
 
   @override
   void dispose() {
+    token?.cancel();
     name.dispose();
     description.dispose();
     super.dispose();
@@ -102,55 +108,7 @@ class _StickerCharacterCreatorScreenState
           .map((f) => f.path)
           .toList();
     } else {
-      final chosen = <String>{};
-      final result = await glassSheet<List<String>>(
-        context,
-        StatefulBuilder(
-          builder: (ctx, update) => Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text(
-                '选择作品中的三视图',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 12),
-              for (final art in widget.store.artworks.take(12))
-                ListTile(
-                  leading: Image.file(
-                    File(art.path),
-                    width: 48,
-                    height: 48,
-                    fit: BoxFit.cover,
-                  ),
-                  title: Text(art.kind),
-                  trailing: Checkbox(
-                    value: chosen.contains(art.path),
-                    onChanged: (_) {
-                      if (chosen.contains(art.path))
-                        chosen.remove(art.path);
-                      else if (chosen.length < 3)
-                        chosen.add(art.path);
-                      update(() {});
-                    },
-                  ),
-                  onTap: () {
-                    if (chosen.contains(art.path))
-                      chosen.remove(art.path);
-                    else if (chosen.length < 3)
-                      chosen.add(art.path);
-                    update(() {});
-                  },
-                ),
-              GlassButton(
-                '完成选择',
-                primary: true,
-                onTap: () => Navigator.pop(ctx, chosen.toList()),
-              ),
-            ],
-          ),
-        ),
-      );
-      paths = result ?? [];
+      paths = await pickArtworkPaths(context, widget.store, limit: 3);
     }
     if (!mounted || paths.isEmpty) return;
     setState(
@@ -163,23 +121,19 @@ class _StickerCharacterCreatorScreenState
 
   Future<void> generateDescriptionFromReferences() async {
     if (references.isEmpty) return;
-    setState(() => polishing = true);
+    setState(() => analyzing = true);
+    token = CancelToken();
     try {
       final visual = await widget.api.imageBrief(
         references,
-        '识别角色三视图并整理稳定的外观、服饰、发型、配色、配件和不可改变特征。',
+        '角色名称：${name.text.trim()}。根据角色三视图，生成可重复制作表情包的基本角色描述，保留外观、服饰、发型、配色、配件和不可改变特征。只输出描述正文。',
+        cancelToken: token,
       );
-      final result = await widget.api.chat([
-        ChatMessage('user', '''请根据角色名称和三视图分析，生成可重复制作表情包的基本角色描述。
-角色名称：${name.text.trim()}
-三视图分析：$visual
-要求：保留角色身份与关键外观；允许添加适合的道具来最大程度展现表情包；只输出描述正文。'''),
-      ]);
-      if (mounted) description.text = result.trim();
+      if (mounted) description.text = withStickerProps(visual);
     } catch (e) {
       if (mounted) toast(context, describeError(e));
     } finally {
-      if (mounted) setState(() => polishing = false);
+      if (mounted) setState(() => analyzing = false);
     }
   }
 
@@ -189,22 +143,15 @@ class _StickerCharacterCreatorScreenState
       return;
     }
     setState(() => polishing = true);
+    token = CancelToken();
     try {
-      var visual = '';
-      if (references.isNotEmpty) {
-        visual = await widget.api.imageBrief(
-          references,
-          '分析这个角色三视图，提取外观、服饰、发型、配色、配件和不可改变的角色特征。',
-        );
-      }
       final result = await widget.api.chat([
-        ChatMessage('user', '''请为一个可重复生成表情包的角色整理一段简洁、稳定的角色设定。
-角色名：${name.text.trim()}
-用户描述：${description.text.trim()}
-三视图分析：$visual
-允许添加适合的道具来最大程度展现表情包。只输出角色设定正文，不要解释，不要生成表情文字。'''),
-      ]);
-      if (mounted) description.text = result.trim();
+        ChatMessage(
+          'user',
+          '润色表情角色「${name.text.trim()}」的描述，保留设定，明确可添加适合的道具。只输出描述正文。\n${description.text.trim()}',
+        ),
+      ], cancelToken: token);
+      if (mounted) description.text = withStickerProps(result);
     } catch (e) {
       if (mounted) toast(context, describeError(e));
     } finally {
@@ -213,36 +160,54 @@ class _StickerCharacterCreatorScreenState
   }
 
   Future<void> save() async {
-    if (references.isEmpty) {
-      toast(context, '请添加角色三视图');
+    if (busy) return;
+    if (name.text.trim().isEmpty ||
+        references.isEmpty ||
+        description.text.trim().isEmpty) {
+      toast(context, '请填写角色名称、三视图和基本描述');
       return;
     }
-    if (description.text.trim().isEmpty) {
-      await polishDescription();
-      if (description.text.trim().isEmpty) return;
-    }
     setState(() => saving = true);
-    final profile = StickerProfile(
-      id: DateTime.now().microsecondsSinceEpoch.toString(),
-      name: name.text.trim().isEmpty ? '我的表情角色' : name.text.trim(),
-      description: description.text.trim(),
-      references: List.of(references),
-    );
-    final all = widget.store.prefs.getStringList('sticker_profiles') ?? [];
-    all.add(jsonEncode(profile.toJson()));
-    await widget.store.prefs.setStringList('sticker_profiles', all);
-    await widget.store.prefs.setString('last_sticker_profile', profile.id);
-    if (mounted) {
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
-          builder: (_) => CustomStickerGeneratorScreen(
-            store: widget.store,
-            api: widget.api,
-            profile: profile,
-          ),
-        ),
+    final id =
+        widget.profile?.id ?? DateTime.now().microsecondsSinceEpoch.toString();
+    try {
+      final savedPaths = <String>[];
+      for (final path in references) {
+        if (path.startsWith(
+          '${widget.store.directory.path}${Platform.pathSeparator}sticker_refs',
+        )) {
+          savedPaths.add(path);
+          continue;
+        }
+        final folder = Directory(
+          '${widget.store.directory.path}${Platform.pathSeparator}sticker_refs',
+        );
+        await folder.create(recursive: true);
+        final bytes = await File(path).readAsBytes();
+        final file = File(
+          '${folder.path}${Platform.pathSeparator}$id-${DateTime.now().microsecondsSinceEpoch}.${imageExtension(bytes)}',
+        );
+        await file.writeAsBytes(bytes, flush: true);
+        savedPaths.add(file.path);
+      }
+      final profile = StickerProfile(
+        id: id,
+        name: name.text.trim(),
+        description: withStickerProps(description.text),
+        references: savedPaths,
       );
+      final all = readStickerProfiles(widget.store)
+        ..removeWhere((p) => p.id == id)
+        ..add(profile);
+      await widget.store.prefs.setStringList(
+        'sticker_profiles',
+        all.map((p) => jsonEncode(p.toJson())).toList(),
+      );
+      if (mounted) Navigator.pop(context, profile);
+    } catch (e) {
+      if (mounted) toast(context, describeError(e));
+    } finally {
+      if (mounted) setState(() => saving = false);
     }
   }
 
@@ -254,7 +219,7 @@ class _StickerCharacterCreatorScreenState
           padding: const EdgeInsets.fromLTRB(24, 8, 24, 30),
           children: [
             PageHeader(
-              title: '创建表情角色',
+              title: widget.profile == null ? '创建表情角色' : '编辑表情角色',
               action: GlassIcon(
                 Icons.arrow_back_rounded,
                 tooltip: '返回',
@@ -262,7 +227,7 @@ class _StickerCharacterCreatorScreenState
               ),
             ),
             const SectionLabel('角色名称'),
-            GlassField(controller: name, hint: '例如：蓝莓小猫'),
+            GlassField(readOnly: busy, controller: name, hint: '例如：蓝莓小猫'),
             const SectionLabel('角色三视图'),
             Glass(
               child: Column(
@@ -297,26 +262,33 @@ class _StickerCharacterCreatorScreenState
                   GlassButton(
                     references.isEmpty ? '添加三视图' : '重新选择三视图',
                     icon: Icons.add_photo_alternate_outlined,
-                    onTap: pickReferences,
+                    onTap: busy ? null : pickReferences,
                   ),
                 ],
               ),
             ),
             const SectionLabel('基本描述'),
             GlassField(
+              readOnly: busy,
               controller: description,
+              onChanged: (_) => setState(() {}),
               hint: '描述角色的身份、性格、服饰、配色和不可改变特征…',
               minLines: 4,
               maxLines: 8,
             ),
             const SizedBox(height: 16),
-            if (polishing)
-              const AuroraBusyButton()
+            if (analyzing || polishing)
+              Text(
+                analyzing ? '正在识别三视图并生成基本描述…' : '正在润色基本描述…',
+                style: TextStyle(color: muted(context)),
+              )
             else
               GlassButton(
                 '智能润色描述',
                 icon: Icons.edit_note_rounded,
-                onTap: polishDescription,
+                onTap: busy || description.text.trim().isEmpty
+                    ? null
+                    : polishDescription,
               ),
             const SizedBox(height: 12),
             SizedBox(
@@ -324,7 +296,7 @@ class _StickerCharacterCreatorScreenState
               child: GlassButton(
                 '保存并开始制作',
                 icon: Icons.save_rounded,
-                onTap: saving ? null : save,
+                onTap: busy ? null : save,
               ),
             ),
           ],
@@ -334,184 +306,21 @@ class _StickerCharacterCreatorScreenState
   );
 }
 
-class CustomStickerGeneratorScreen extends StatefulWidget {
-  final AppStore store;
-  final StudioApi api;
-  final StickerProfile profile;
-  const CustomStickerGeneratorScreen({
-    super.key,
-    required this.store,
-    required this.api,
-    required this.profile,
-  });
-  @override
-  State<CustomStickerGeneratorScreen> createState() =>
-      _CustomStickerGeneratorScreenState();
-}
+const stickerProps = '允许添加适合的道具来最大程度展现表情包';
+String withStickerProps(String text) => text.contains(stickerProps)
+    ? text.trim()
+    : '${text.trim()}\n$stickerProps。';
 
-class _CustomStickerGeneratorScreenState
-    extends State<CustomStickerGeneratorScreen> {
-  final text = TextEditingController();
-  bool animated = false, busy = false;
-  double progress = 0;
-  int seconds = 0;
-  Timer? timer;
-  String stage = '等待生成';
-  CancelToken? token;
-
-  @override
-  void dispose() {
-    token?.cancel();
-    timer?.cancel();
-    text.dispose();
-    super.dispose();
-  }
-
-  Future<void> generate() async {
-    if (busy || text.text.trim().isEmpty) return;
-    if (!widget.store.imageApi.ready || !widget.store.chatApi.ready) {
-      toast(context, '请先配置生图和对话模型');
-      return;
-    }
-    setState(() {
-      busy = true;
-      progress = .08;
-      stage = '对话模型正在理解表情文本';
-    });
-    token = CancelToken();
+List<StickerProfile> readStickerProfiles(AppStore store) {
+  final profiles = <StickerProfile>[];
+  for (final encoded
+      in store.prefs.getStringList('sticker_profiles') ?? <String>[]) {
     try {
-      final brief = await widget.api.chat([
-        ChatMessage('user', '''根据角色设定和表情文字，设计一个可执行的表情包画面指令。
-角色设定：${widget.profile.description}
-表情文字：${text.text.trim()}
-只输出生图提示词，保留角色外观一致性、动作、道具和文字位置。'''),
-      ], cancelToken: token);
-      setState(() {
-        progress = .25;
-        stage = animated ? '生图模型正在生成动图' : '生图模型正在生成表情包';
-      });
-      final options = animated
-          ? GenerationOptions(
-              width: 512,
-              height: 512,
-              format: 'gif',
-              quality: 'high',
-              advanced: {'frame_count': 8, 'frame_duration_ms': 150},
-            )
-          : GenerationOptions(
-              width: 4096,
-              height: 4096,
-              format: 'jpeg',
-              quality: 'high',
-            );
-      final reply = await widget.api.generate(
-        prompt:
-            '''$brief
-角色设定：${widget.profile.description}
-画面文字：${text.text.trim()}
-保持 consistent character，smooth motion，帧间一致性约束，画面铺满画布，不要白边。''',
-        options: options,
-        inputs: widget.profile.references,
-        cancelToken: token,
-        operation: '${widget.profile.name} ${animated ? '动图' : '表情包'}',
-        onStage: (v) {
-          if (mounted)
-            setState(() {
-              stage = v;
-              progress = stageProgress(v) ?? progress;
-            });
-        },
-      );
-      for (final bytes in reply.images) {
-        await saveArtwork(
-          widget.store,
-          bytes,
-          prompt: text.text.trim(),
-          model: widget.store.imageApi.model,
-          kind: '${widget.profile.name}${animated ? ' 动图表情包' : ' 表情包'}',
-          format: animated ? 'gif' : 'jpeg',
-        );
-      }
-      if (mounted) {
-        toast(context, '已保存到作品');
-        Navigator.of(context).popUntil((route) => route.isFirst);
-      }
-    } catch (e) {
-      if (mounted) toast(context, describeError(e));
-    } finally {
-      timer?.cancel();
-      if (mounted) setState(() => busy = false);
+      final profile = StickerProfile.fromJson(jsonDecode(encoded));
+      if (profile.id.isNotEmpty) profiles.add(profile);
+    } catch (_) {
+      // Ignore a damaged entry without discarding the other characters.
     }
   }
-
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    body: StudioBackground(
-      child: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(24, 8, 24, 30),
-          children: [
-            PageHeader(
-              title: widget.profile.name,
-              action: GlassIcon(
-                Icons.arrow_back_rounded,
-                tooltip: '返回',
-                onTap: () => Navigator.pop(context),
-              ),
-            ),
-            Glass(
-              child: Text(
-                widget.profile.description,
-                style: TextStyle(color: muted(context), height: 1.6),
-              ),
-            ),
-            const SectionLabel('表情文本'),
-            GlassField(
-              controller: text,
-              hint: '例如：今天也要元气满满',
-              minLines: 3,
-              maxLines: 5,
-            ),
-            const SectionLabel('生成类型'),
-            GlassSegments(
-              labels: const ['静态 1:1 · 4K', '动图 1:1 · 512'],
-              selected: animated ? 1 : 0,
-              onChanged: busy
-                  ? (_) {}
-                  : (v) => setState(() => animated = v == 1),
-            ),
-            const SizedBox(height: 18),
-            if (animated)
-              Glass(
-                child: Text(
-                  '固定 8 帧 · 每帧 150 ms · smooth motion · consistent character · 帧间一致性',
-                  style: TextStyle(color: muted(context), height: 1.5),
-                ),
-              ),
-            if (busy) ...[
-              const SizedBox(height: 18),
-              TaskStatusCard(
-                title: animated
-                    ? '${widget.profile.name} 动图ing'
-                    : '${widget.profile.name} 表情包ing',
-                stage: stage,
-                progress: progress,
-                seconds: seconds,
-                onCancel: () => token?.cancel(),
-              ),
-            ],
-            const SizedBox(height: 18),
-            SizedBox(
-              width: double.infinity,
-              child: GlassButton(
-                '生成表情包',
-                icon: Icons.auto_awesome_rounded,
-                onTap: busy ? null : generate,
-              ),
-            ),
-          ],
-        ),
-      ),
-    ),
-  );
+  return profiles;
 }
