@@ -67,12 +67,20 @@ def push(tokens):
             print(clean[-1800:], file=sys.stderr)
             raise RuntimeError(provider+' source push failed')
         print('Source push complete:',provider,flush=True)
-def release(tokens):
+def release_notes():
+    changelog=(ROOT/'CHANGELOG.md').read_text(encoding='utf8')
+    version=re.escape(VERSION)
+    match=re.search(rf'^## V{version}(?=\s|$)[^\n]*\n(.*?)(?=^## |\Z)',changelog,re.M|re.S)
+    if not match: raise RuntimeError(f'Changelog section V{VERSION} was not found')
     section=''; entries=[]
-    for line in (ROOT/'CHANGELOG.md').read_text(encoding='utf8').split('\n## ')[1].splitlines():
+    for line in match.group(1).splitlines():
         if line.startswith('### '): section=line[4:]
         elif line.startswith('- ') and section in ['新增','优化','修复']: entries.append(section+'：'+line[2:])
-    notes='\n'.join(entries)
+    if not entries: raise RuntimeError(f'Changelog section V{VERSION} has no release notes')
+    return '\n'.join(entries)
+
+def release(tokens):
+    notes=release_notes()
     results={}
     for provider,(owner,name,api) in REPOS.items():
         s=session(provider,tokens[provider]);endpoint=f'{api}/repos/{owner}/{name}/releases'
