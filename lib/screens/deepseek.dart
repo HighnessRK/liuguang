@@ -14,6 +14,7 @@ import '../core/store.dart';
 import '../core/updates.dart';
 import '../ui/glass.dart';
 import 'custom_sticker.dart';
+import 'sticker_manager.dart';
 
 const _fishAsset = 'assets/deepseek/fish_reference.jpg';
 const _fish = StickerProfile(
@@ -93,58 +94,14 @@ class _DeepSeekStickerScreenState extends State<DeepSeekStickerScreen> {
   }
 
   Future<void> manageCharacters() async {
-    final profiles = [_fish, ...readStickerProfiles(widget.store)];
-    final choice = await glassSheet<(String, StickerProfile)>(
+    final choice = await Navigator.push<(String, StickerProfile)>(
       context,
-      Builder(
-        builder: (sheetContext) => Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const SectionLabel('表情角色管理'),
-            for (final item in profiles)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: Glass(
-                  padding: const EdgeInsets.all(10),
-                  blur: false,
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          item.id == _fish.id
-                              ? 'DeepSeek 大肥鱼娘 · 内置'
-                              : item.name,
-                        ),
-                      ),
-                      GlassIcon(
-                        item.id == profile.id
-                            ? Icons.check_circle_rounded
-                            : Icons.arrow_forward_rounded,
-                        tooltip: '选用${item.name}',
-                        onTap: () =>
-                            Navigator.pop(sheetContext, ('select', item)),
-                      ),
-                      if (item.id != _fish.id) ...[
-                        const SizedBox(width: 8),
-                        GlassIcon(
-                          Icons.edit_outlined,
-                          tooltip: '编辑${item.name}',
-                          onTap: () =>
-                              Navigator.pop(sheetContext, ('edit', item)),
-                        ),
-                        const SizedBox(width: 8),
-                        GlassIcon(
-                          Icons.delete_outline_rounded,
-                          tooltip: '删除${item.name}',
-                          onTap: () =>
-                              Navigator.pop(sheetContext, ('delete', item)),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ),
-          ],
+      MaterialPageRoute(
+        builder: (_) => StickerManager(
+          store: widget.store,
+          builtin: _fish,
+          active: profile,
+          builtinImage: const AssetImage(_fishAsset),
         ),
       ),
     );
@@ -168,6 +125,23 @@ class _DeepSeekStickerScreenState extends State<DeepSeekStickerScreen> {
           await widget.store.prefs.remove('last_sticker_profile');
         }
         if (mounted && profile.id == item.id) await selectProfile(_fish);
+        if (item.id.startsWith('cloud-')) {
+          final inUse = remaining.expand((entry) => entry.references).toSet();
+          for (final path in item.references) {
+            final file = File(path);
+            final name = file.uri.pathSegments.lastOrNull ?? '';
+            if (path == '${widget.store.directory.path}/sticker_refs/$name' &&
+                name.startsWith('${item.id}-') &&
+                name.endsWith('.webp') &&
+                !inUse.contains(path)) {
+              try {
+                if (await file.exists()) await file.delete();
+              } on FileSystemException {
+                await AppLog.record('sticker_cleanup_error');
+              }
+            }
+          }
+        }
         await AppLog.record('sticker_character_deleted');
     }
   }
@@ -342,33 +316,7 @@ class _DeepSeekStickerScreenState extends State<DeepSeekStickerScreen> {
                     ),
                     if (images.isNotEmpty) ...[
                       const SizedBox(height: 12),
-                      SizedBox(
-                        height: 128,
-                        child: Row(
-                          children: [
-                            for (var i = 0; i < images.length; i++) ...[
-                              if (i > 0) const SizedBox(width: 8),
-                              Expanded(
-                                child: ClipRRect(
-                                  borderRadius: BorderRadius.circular(14),
-                                  child: ZoomableImage(
-                                    image: images[i],
-                                    child: Image(
-                                      image: images[i],
-                                      fit: BoxFit.contain,
-                                      errorBuilder: (_, _, _) => const Center(
-                                        child: Icon(
-                                          Icons.broken_image_outlined,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                      ),
+                      StickerReferencePreview(images: images),
                     ],
                   ],
                 ),

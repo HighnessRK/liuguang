@@ -4,7 +4,7 @@ Regenerate assets and the typed material catalogue using Pillow + numpy.
 from pathlib import Path
 import json, math
 import numpy as np
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parents[1]
 # id, category, name, family, base tint, original physical description
@@ -43,70 +43,104 @@ ROWS = [
 ('satin','织物','褶皱缎','satin','#d7acbc','细腻缎面，柔和褶皱，连续流动的光泽层次'),
 ]
 
-def render(row, size=320):
+def render(row, size=600):
     ident, _, _, family, tint, _ = row
-    rng = np.random.default_rng(sum(map(ord,ident)))
-    yy,xx=np.mgrid[:size,:size]; x=(xx-size*.5)/(size*.34); y=(yy-size*.48)/(size*.34)
-    r2=x*x+y*y; inside=r2<=1; z=np.sqrt(np.maximum(0,1-r2))
-    base=np.array([int(tint[i:i+2],16) for i in (1,3,5)])/255
-    bg=np.empty((size,size,3)); bg[:]=[.92,.925,.94]
-    bg += ((xx/size+yy/size)*.025)[...,None]
-    shadow=np.exp(-((x/.9)**2+((y-1.02)/.13)**2)*2)*.22
-    bg-=shadow[...,None]
-    light=np.clip(-x*.35-y*.5+z*.78,0,1); noise=rng.normal(0,1,(size,size))
-    diffuse=.32+.64*light
-    rgb=base*diffuse[...,None]
-    spec=np.exp(-(((x+.37)/.25)**2+((y+.48)/.12)**2))*z
-    rim=(1-z)**3
-    if family in ['glass','iridescent','bubble','jelly','frost','wax']:
-        pattern=(np.sin(x*5+z*3)+np.cos(y*5-z*4))*.05
-        rgb=bg*(.72 if family=='glass' else .46)+base*(.22+.16*z[...,None])
-        rgb+=pattern[...,None]
-        rgb-=rim[...,None]*.19
-        rgb+=np.maximum(0,np.sin((x-y)*3+z*5))[...,None]*.06
-        if family=='iridescent':
-            rgb=.55*rgb+.45*np.stack([.65+.3*np.sin(z*8+x*2+k) for k in [0,2,4]],axis=-1)
-        if family=='frost':rgb=rgb*.97+noise[...,None]*.014
-        if family=='bubble':
-            for _ in range(24):
-                a,b=rng.uniform(-.72,.72,2);rad=rng.uniform(.025,.09)
-                d=np.sqrt((x-a)**2+(y-b)**2)
-                rgb += np.exp(-((d-rad)/.008)**2)[...,None]*.25
-        rgb+=spec[...,None]*(.24 if family in ['frost','wax'] else .6)
-        rgb+=np.exp(-((np.sqrt(r2)-.965)/.018)**2)[...,None]*.22
-    elif family in ['metal','brushed']:
-        waves=np.clip(.25+.28*np.sin(y*7+z*2)+.3*light,0,1)
-        rgb=base*waves[...,None]+spec[...,None]*.9
-        rgb+=np.exp(-((y+.36+x*.22)/.08)**2)[...,None]*.36
-        if family=='brushed':rgb+=(np.sin(y*760)*.025+noise*.012)[...,None]
+    rng = np.random.default_rng(sum(map(ord, ident)))
+    yy, xx = np.mgrid[:size, :size] / size
+    x = (xx - .50) / .36
+    y = (yy - .48) / .33
+    angle = np.arctan2(y, x)
+    optical = family in {"glass", "iridescent", "bubble", "frost", "jelly", "wax"}
+    metal = family in {"metal", "brushed"}
+    # The finish is photographed on a small test shape, with matching backdrop and softbox.
+    # The profile gently varies across glass, fabric, polished blocks and soft materials.
+    if ident in {"liquid_glass", "liquid_chrome", "silk", "satin"}:
+        radius = 1 + .12 * np.cos(angle * 3 + .35) + .055 * np.sin(angle * 5)
+        distance = np.hypot(x, y) / radius
+    elif ident in {"clear_glass", "brushed_aluminum", "felt", "marble", "wood", "paper", "denim", "linen", "resin"}:
+        u, v = .94 * x + .34 * y, -.34 * x + .94 * y
+        distance = (abs(u) ** 4 + abs(v) ** 4) ** .25
     else:
-        if family=='marble':
-            veins=np.exp(-np.abs(np.sin(x*4+y*3+np.sin(y*5)*.6)) *35)
-            rgb-=veins[...,None]*.27
-        if family=='wood':rgb+=(np.sin(x*24+np.sin(y*2)*2+z*4)*.055)[...,None]
-        if family in ['knit','linen','denim']:
-            t=(np.sin(x*80+(y*55 if family=='denim' else 0))*np.sin(y*95))*.09
-            rgb+=t[...,None]+noise[...,None]*.018
-        if family in ['silk','satin','velvet']:
-            wave=np.sin(x*5+y*3+z*4)**6
-            rgb+=wave[...,None]*(.24 if family!='velvet' else .12)
-        rgb+=noise[...,None]*(.03 if family in ['clay','felt','paper','stone'] else .006)
-        rgb+=spec[...,None]*(.45 if family=='ceramic' else .06)
-    rgb=np.clip(rgb,0,1); bg[inside]=rgb[inside]
-    im=Image.fromarray((np.clip(bg,0,1)*255).astype('uint8')).convert('RGB')
-    if family in ['fur','longfur','felt','velvet']:
-        draw=ImageDraw.Draw(im)
-        count=11500 if family!='longfur' else 9000
-        for _ in range(count):
-            a,b=rng.uniform(-1,1,2)
-            if a*a+b*b>.99:continue
-            zz=math.sqrt(1-a*a-b*b); length=rng.uniform(3,12 if family=='longfur' else 5)
-            px=size*(.5+a*.34);py=size*(.48+b*.34)
-            bright=.38+.6*max(0,-a*.35-b*.5+zz*.78)+rng.uniform(-.10,.13)
-            col=tuple(np.clip(base*bright*255,0,255).astype(int))
-            dx=a*length*.6+rng.uniform(-2,2);dy=-length*(.3+zz*.7)
-            draw.line([(px,py),(px+dx,py+dy)],fill=col,width=1)
-    return im.resize((256,256),Image.Resampling.LANCZOS)
+        distance = np.hypot(x, y) * (1 + .023 * np.sin(angle * 4))
+    z = np.sqrt(np.maximum(0, 1 - distance ** 2))
+    gy, gx = np.gradient(z)
+    nx, ny = -gx * size * .30, -gy * size * .30
+    norm = np.sqrt(nx * nx + ny * ny + 1)
+    nx, ny, nz = nx / norm, ny / norm, 1 / norm
+    tint = np.array([int(tint[i:i+2], 16) / 255 for i in (1, 3, 5)])
+    tint = tint ** 2
+    noise = rng.normal(0, 1, distance.shape)
+    backlight = np.exp(-((x + .55) ** 2 + (y + .75) ** 2) * .47)
+    background = (.53 + .29 * backlight - .08 * yy)[..., None] * (.79 + .21 * tint)
+    shadow = .31 * np.exp(-((x - .15) / .84) ** 2 * 2 - ((y - 1.025) / .21) ** 2 * 2)
+    background *= 1 - shadow[..., None]
+    light = np.maximum(0, -nx * .47 - ny * .55 + nz * .69)
+    reflected = np.maximum(0, -nx * .29 - ny * .37 + nz * .87)
+    strip = np.exp(-((nx + .52) / .36) ** 6 - ((ny + .36 + .18 * nx) / .20) ** 4)
+    rim = (1 - nz) ** 3
+    weave_u, weave_v = x * 72 + 11 * z, y * 67 - 13 * z
+    pattern = np.zeros_like(x)
+    if family in {"knit", "linen", "denim"}:
+        warp = np.sin(weave_u + (weave_v * .55 if family == "denim" else .6 * np.sin(weave_v)))
+        weft = np.sin(weave_v + .42 * np.sin(weave_u))
+        pattern = (warp * weft) * .072 + noise * .017
+        if family == "knit": pattern += np.cos(x * 19 + 1.8 * np.sin(y * 27)) ** 10 * .11
+    elif family in {"silk", "satin", "velvet"}:
+        pattern = np.sin(9 * x + 6 * y + 7 * z + 2.8 * np.sin(y * 3)) ** 6 * .18
+    elif family == "wood":
+        flow = (x - .32 * y + .08 * np.sin(y * 4)) * 43 + z * 7
+        pattern = .069 * np.sin(flow) + .037 * np.sin(flow * 2.13 + 2 * x) + .019 * noise
+    elif family in {"marble", "stone"}:
+        warps = 1.3 * np.sin(3 * y) + .17 * np.sin(22 * y + 2 * x)
+        veins = np.exp(-np.abs(np.sin(5 * x + 6 * y + warps)) * 24)
+        pattern = -.20 * veins + .035 * np.cos(13 * y - 6 * x) + .011 * noise
+    elif family in {"clay", "paper", "fur", "longfur", "felt"}:
+        pattern = .018 * noise + .025 * np.sin(x * 44 + 8 * np.sin(y * 39))
+    if optical:
+        transmitted = (.52 + .18 * np.cos(3 * x + 2.2 * y + z * 4.4) * np.sin(z * 6 - 4 * y))[..., None]
+        fog = .28 if family in {"frost", "wax"} else .11
+        rgb = transmitted * (1 - fog) * (.76 + .24 * tint) + tint * fog
+        rgb *= (.44 + .56 * nz)[..., None]
+        bend = .11 * np.exp(-((ny - .52 + nx * .21) / .16) ** 2) * (1 - nz * .4)
+        rgb += tint * (bend + .12 * z)[..., None]
+        rgb += (np.array([.25, .32, .47]) * rim[..., None])
+        rgb += (strip * (.33 if fog > .2 else .55) + reflected ** 33 * .30)[..., None]
+        if family == "iridescent":
+            rgb += np.stack([np.cos(nz * 9 + y * 2 + k) * .13 for k in (0, 2.3, 4.5)], axis=-1)
+        if family == "bubble":
+            for a, b, r in rng.uniform((-.7, -.7, .017), (.7, .7, .070), (22, 3)):
+                bubble = np.hypot(x - a, y - b)
+                rgb += (.23 * np.exp(-((bubble - r) / .009) ** 2) - .11 * np.exp(-(bubble / r) ** 2))[..., None]
+        if family in {"frost", "wax"}: rgb += noise[..., None] * .009
+    elif metal:
+        reflection = .14 + .48 * np.exp(-((ny + .58 + .15 * nx) / .31) ** 8)
+        reflection += .29 * np.exp(-((ny - .40 - .33 * nx) / .38) ** 6) + .17 * light
+        if family == "brushed": reflection = .30 + .50 * light + .045 * np.sin(y * 980) + .025 * noise
+        rgb = (.18 + .82 * tint) * reflection[..., None]
+        rgb += (strip * .27 + rim * .12)[..., None]
+    else:
+        rgb = tint * (.25 + .63 * light + pattern)[..., None]
+        gloss = .36 if family == "ceramic" else .14 if family in {"silk", "satin", "matte"} else .07
+        rgb += (reflected ** 18 * gloss + rim * .045)[..., None]
+    mask = np.clip((1.003 - distance) * size / 2.5, 0, 1)[..., None]
+    composite = background * (1 - mask) + rgb * mask
+    composite += noise[..., None] * .0015
+    raster = Image.fromarray((np.clip(composite, 0, 1) ** .47 * 255).astype("uint8")).convert("RGB")
+    if family in {"fur", "longfur", "felt", "velvet"}:
+        draw = ImageDraw.Draw(raster, 'RGBA')
+        for _ in range(28500 if family == 'longfur' else 33500):
+            a, b = rng.uniform(-1.015, 1.015, 2)
+            if a*a + b*b > 1.015: continue
+            depth = math.sqrt(max(0, 1 - a*a - b*b))
+            length = rng.uniform(3.0, 23.0 if family == 'longfur' else 10.0 if family == 'fur' else 5.5)
+            profile = .28 + .66 * max(0, -.35*a - .46*b + .78*depth)
+            blend = math.sqrt(profile) + rng.uniform(-.16, .18)
+            color = tuple(np.clip((tint ** .47) * blend * 255, 0, 255).astype(int)) + (int(rng.integers(35, 147)),)
+            px, py = size*(.50 + a*.36), size*(.48 + b*.33)
+            dx, dy = (.37 + a * .9) * length, (.82 + b * .35) * length
+            draw.line([(px, py), (px + dx * .56, py + dy * .57), (px + dx, py + dy)], fill=color, width=1)
+    return raster.resize((384, 384), Image.Resampling.LANCZOS)
+
 
 def main():
     dest=ROOT/'assets/materials';dest.mkdir(parents=True,exist_ok=True)

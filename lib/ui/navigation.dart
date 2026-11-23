@@ -27,15 +27,18 @@ class _LiquidNavigationState extends State<LiquidNavigation>
     value: widget.selected.toDouble(),
   );
   bool dragging = false;
+  int? pendingSelection;
   @override
   void didUpdateWidget(covariant LiquidNavigation old) {
     super.didUpdateWidget(old);
     if (old.selected != widget.selected && !dragging) {
-      settle(widget.selected, notify: false);
+      if (pendingSelection != widget.selected)
+        settle(widget.selected, notify: false);
+      pendingSelection = null;
     }
   }
 
-  void settle(int index, {bool notify = true}) {
+  void settle(int index, {bool notify = true, double velocity = 0}) {
     final target = index.clamp(0, 3);
     if (StudioScope.of(context).reduceMotion ||
         MediaQuery.disableAnimationsOf(context)) {
@@ -46,7 +49,7 @@ class _LiquidNavigationState extends State<LiquidNavigation>
           const SpringDescription(mass: 1, stiffness: 420, damping: 33),
           position.value,
           target.toDouble(),
-          0,
+          velocity,
         ),
       );
     }
@@ -54,6 +57,7 @@ class _LiquidNavigationState extends State<LiquidNavigation>
       if (StudioScope.of(context).haptics) {
         HapticFeedback.selectionClick();
       }
+      pendingSelection = target;
       widget.onChanged(target);
     }
   }
@@ -85,9 +89,18 @@ class _LiquidNavigationState extends State<LiquidNavigation>
                   0.0,
                   3.0,
                 ),
-            onHorizontalDragEnd: (_) {
+            onHorizontalDragEnd: (details) {
+              final slot = (width - 8) / 4;
+              final velocity = ((details.primaryVelocity ?? 0) / slot).clamp(
+                -10.0,
+                10.0,
+              );
+              final target = (position.value + velocity * .07).round().clamp(
+                0,
+                3,
+              );
               setState(() => dragging = false);
-              settle(position.value.round());
+              settle(target, velocity: velocity);
             },
             onHorizontalDragCancel: () {
               setState(() => dragging = false);
@@ -108,21 +121,27 @@ class _LiquidNavigationState extends State<LiquidNavigation>
                       clipBehavior: Clip.none,
                       children: [
                         Positioned(
-                          left: slot * position.value.clamp(0.0, 3.0),
+                          left: 0,
                           top: 0,
                           bottom: 0,
                           width: slot,
-                          child: Transform.scale(
-                            scaleX: dragging ? 1.06 : 1,
-                            scaleY: dragging ? .96 : 1,
-                            child: BackdropGroup(
-                              child: Glass(
-                                radius: 99,
-                                opacity: isDark(context) ? .32 : .36,
-                                refraction: 2.4,
-                                tint: accent(context),
-                                padding: EdgeInsets.zero,
-                                child: const SizedBox.expand(),
+                          child: Transform.translate(
+                            offset: Offset(
+                              slot * position.value.clamp(0.0, 3.0),
+                              0,
+                            ),
+                            child: Transform.scale(
+                              scaleX: dragging ? 1.06 : 1,
+                              scaleY: dragging ? .96 : 1,
+                              child: BackdropGroup(
+                                child: Glass(
+                                  radius: 99,
+                                  opacity: isDark(context) ? .32 : .36,
+                                  refraction: 2.4,
+                                  tint: accent(context),
+                                  padding: EdgeInsets.zero,
+                                  child: const SizedBox.expand(),
+                                ),
                               ),
                             ),
                           ),
@@ -162,9 +181,7 @@ class _LiquidNavigationState extends State<LiquidNavigation>
                                         style: TextStyle(
                                           fontSize: 11,
                                           height: 1.1,
-                                          fontWeight: intensity > .5
-                                              ? FontWeight.w600
-                                              : FontWeight.w400,
+                                          fontWeight: FontWeight.w500,
                                           color: color,
                                         ),
                                       ),

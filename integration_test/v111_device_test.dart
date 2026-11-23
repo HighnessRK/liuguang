@@ -104,7 +104,9 @@ void main() {
       expect(find.text('验证小猫 · 固定角色参考'), findsOneWidget);
       await tester.tap(find.byTooltip('表情角色管理'));
       await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('删除验证小猫'));
+      await tester.tap(find.byTooltip('管理验证小猫'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('删除验证小猫'));
       await tester.pumpAndSettle();
       expect(find.text('删除「验证小猫」？'), findsOneWidget);
       await tester.tap(find.text('确认').last);

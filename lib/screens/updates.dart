@@ -330,6 +330,8 @@ class _VersionLogState extends State<VersionLog> {
     children: [
       for (final entry in [
         (appVersion, releaseNotes, '2026-11-23'),
+        ('1.1.2', releaseNotesV112, '2026-11-23'),
+        ('1.1.1', releaseNotesV111, '2026-11-23'),
         ('1.1.0', releaseNotesV110, '2026-11-19'),
         ('1.0.9', '修复：恢复历史作品与请求明细，新增自定义表情角色创建和 GIF 参数校验。', '2026-11-19'),
         ('1.0.8', releaseNotesV108, '2026-11-19'),
@@ -365,14 +367,18 @@ class _VersionLogState extends State<VersionLog> {
                       ),
                       AnimatedRotation(
                         turns: expanded.contains(entry.$1) ? .5 : 0,
-                        duration: const Duration(milliseconds: 200),
+                        duration: MediaQuery.disableAnimationsOf(context)
+                            ? Duration.zero
+                            : const Duration(milliseconds: 165),
                         child: const Icon(Icons.expand_more),
                       ),
                     ],
                   ),
                 ),
                 AnimatedSize(
-                  duration: const Duration(milliseconds: 200),
+                  duration: MediaQuery.disableAnimationsOf(context)
+                      ? Duration.zero
+                      : const Duration(milliseconds: 165),
                   alignment: Alignment.topCenter,
                   child: expanded.contains(entry.$1)
                       ? Column(
@@ -685,7 +691,7 @@ class ChangeTag extends StatelessWidget {
 }
 
 Future<void> floatingRelease(BuildContext context, Widget child) =>
-    showDialog<void>(
+    studioDialog<void>(
       context: context,
       builder: (ctx) => Dialog(
         backgroundColor: Colors.transparent,

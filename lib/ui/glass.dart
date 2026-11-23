@@ -86,52 +86,61 @@ class Glass extends StatelessWidget {
             .dependOnInheritedWidgetOfExactType<_GlassScope>()
             ?.insideGlass ??
         false;
-    if (!separateLayer && !nested) {
+    if (!separateLayer && !nested || GlassMotionScope.of(context)) {
       final r = BorderRadius.circular(radius);
       final materialShift = (store.glassOpacity - .22) * .6;
       double surfaceAlpha(double value) =>
           store.highContrast ? .96 : (value + materialShift).clamp(.03, .96);
+      final content = Container(
+        padding: padding,
+        decoration: BoxDecoration(
+          borderRadius: r,
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: tint != null
+                ? [
+                    tint!.withValues(
+                      alpha:
+                          opacity ?? (separateLayer ? store.glassOpacity : .3),
+                    ),
+                    tint!.withValues(
+                      alpha:
+                          opacity ?? (separateLayer ? store.glassOpacity : .2),
+                    ),
+                  ]
+                : dark
+                ? [
+                    (store.highContrast
+                            ? const Color(0xff202733)
+                            : Colors.white)
+                        .withValues(alpha: surfaceAlpha(.13)),
+                    (store.highContrast
+                            ? const Color(0xff202733)
+                            : Colors.white)
+                        .withValues(alpha: surfaceAlpha(.05)),
+                  ]
+                : [
+                    Colors.white.withValues(alpha: surfaceAlpha(.82)),
+                    Colors.white.withValues(alpha: surfaceAlpha(.52)),
+                  ],
+          ),
+          border: Border.all(
+            color: Colors.white.withValues(alpha: dark ? .14 : .85),
+          ),
+        ),
+        child: child,
+      );
+      if (store.highContrast ||
+          !blur ||
+          store.blur <= 0 ||
+          GlassMotionScope.of(context))
+        return content;
       return ClipRRect(
         borderRadius: r,
         child: BackdropFilter.grouped(
-          filter: ui.ImageFilter.blur(
-            sigmaX: store.highContrast || !blur ? 0 : store.blur,
-            sigmaY: store.highContrast || !blur ? 0 : store.blur,
-          ),
-          child: Container(
-            padding: padding,
-            decoration: BoxDecoration(
-              borderRadius: r,
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: tint != null
-                    ? [
-                        tint!.withValues(alpha: opacity ?? .3),
-                        tint!.withValues(alpha: opacity ?? .2),
-                      ]
-                    : dark
-                    ? [
-                        (store.highContrast
-                                ? const Color(0xff202733)
-                                : Colors.white)
-                            .withValues(alpha: surfaceAlpha(.13)),
-                        (store.highContrast
-                                ? const Color(0xff202733)
-                                : Colors.white)
-                            .withValues(alpha: surfaceAlpha(.05)),
-                      ]
-                    : [
-                        Colors.white.withValues(alpha: surfaceAlpha(.82)),
-                        Colors.white.withValues(alpha: surfaceAlpha(.52)),
-                      ],
-              ),
-              border: Border.all(
-                color: Colors.white.withValues(alpha: dark ? .14 : .85),
-              ),
-            ),
-            child: child,
-          ),
+          filter: ui.ImageFilter.blur(sigmaX: store.blur, sigmaY: store.blur),
+          child: content,
         ),
       );
     }
@@ -260,16 +269,16 @@ class GlassButton extends StatelessWidget {
                 AppLog.record(_buttonEvent(label));
                 onTap!();
               },
-        child: Opacity(
-          opacity: onTap == null || busy ? .68 : 1,
-          child: Glass(
-            separateLayer: ModalRoute.of(context) is! PopupRoute,
-            radius: 16,
-            tint: primary ? accent(context) : null,
-            padding: EdgeInsets.symmetric(
-              horizontal: small ? 14 : 20,
-              vertical: small ? 8 : 12,
-            ),
+        child: Glass(
+          separateLayer: ModalRoute.of(context) is! PopupRoute,
+          radius: 16,
+          tint: primary ? accent(context) : null,
+          padding: EdgeInsets.symmetric(
+            horizontal: small ? 14 : 20,
+            vertical: small ? 8 : 12,
+          ),
+          child: _PressMotion(
+            enabled: onTap != null && !busy,
             child: Row(
               mainAxisSize: MainAxisSize.min,
               mainAxisAlignment: MainAxisAlignment.center,
@@ -278,10 +287,7 @@ class GlassButton extends StatelessWidget {
                   SizedBox(
                     width: 18,
                     height: 18,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: foreground,
-                    ),
+                    child: StudioProgress(color: foreground),
                   )
                 else if (icon != null)
                   Icon(icon, size: 20, color: foreground),
@@ -306,6 +312,21 @@ class GlassButton extends StatelessWidget {
         ? Align(alignment: Alignment.center, widthFactor: 1, child: button)
         : button;
   }
+}
+
+class StudioProgress extends StatelessWidget {
+  const StudioProgress({super.key, this.color, this.strokeWidth = 2});
+  final Color? color;
+  final double strokeWidth;
+  @override
+  Widget build(BuildContext context) => MediaQuery.disableAnimationsOf(context)
+      ? Icon(
+          Icons.hourglass_top_rounded,
+          size: 14,
+          color: color ?? accentInk(context),
+          semanticLabel: '正在处理',
+        )
+      : CircularProgressIndicator(color: color, strokeWidth: strokeWidth);
 }
 
 class GlassIcon extends StatelessWidget {
@@ -334,12 +355,93 @@ class GlassIcon extends StatelessWidget {
           padding: EdgeInsets.zero,
           child: SizedBox.square(
             dimension: 44,
-            child: Icon(icon, size: 22, color: ink(context)),
+            child: _PressMotion(
+              enabled: onTap != null,
+              child: Icon(icon, size: 22, color: ink(context)),
+            ),
           ),
         ),
       ),
     ),
   );
+}
+
+const studioEaseOut = Cubic(.23, 1, .32, 1);
+
+class GlassMotionScope extends InheritedWidget {
+  const GlassMotionScope({
+    super.key,
+    required super.child,
+    required this.staticSurface,
+  });
+  final bool staticSurface;
+  static bool of(BuildContext context) =>
+      context
+          .dependOnInheritedWidgetOfExactType<GlassMotionScope>()
+          ?.staticSurface ??
+      false;
+  @override
+  bool updateShouldNotify(GlassMotionScope oldWidget) =>
+      staticSurface != oldWidget.staticSurface;
+}
+
+class StudioRouteMotion extends StatelessWidget {
+  const StudioRouteMotion({
+    super.key,
+    required this.animation,
+    required this.child,
+    this.artwork = false,
+  });
+  final Animation<double> animation;
+  final Widget child;
+  final bool artwork;
+
+  @override
+  Widget build(BuildContext context) {
+    final content = RepaintBoundary(
+      child: GlassMotionScope(staticSurface: true, child: child),
+    );
+    if (MediaQuery.disableAnimationsOf(context)) return content;
+    return ClipRect(
+      child: SlideTransition(
+        position: animation
+            .drive(CurveTween(curve: studioEaseOut))
+            .drive(
+              Tween(begin: Offset(artwork ? .036 : .09, 0), end: Offset.zero),
+            ),
+        child: content,
+      ),
+    );
+  }
+}
+
+class _PressMotion extends StatefulWidget {
+  const _PressMotion({required this.enabled, required this.child});
+  final bool enabled;
+  final Widget child;
+  @override
+  State<_PressMotion> createState() => _PressMotionState();
+}
+
+class _PressMotionState extends State<_PressMotion> {
+  bool down = false;
+  @override
+  Widget build(BuildContext context) {
+    if (!widget.enabled || MediaQuery.disableAnimationsOf(context))
+      return widget.child;
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: (_) => setState(() => down = true),
+      onPointerUp: (_) => setState(() => down = false),
+      onPointerCancel: (_) => setState(() => down = false),
+      child: AnimatedScale(
+        scale: down ? .97 : 1,
+        duration: const Duration(milliseconds: 120),
+        curve: studioEaseOut,
+        child: widget.child,
+      ),
+    );
+  }
 }
 
 class GlassField extends StatelessWidget {
@@ -387,27 +489,88 @@ class GlassSegments extends StatelessWidget {
     required this.onChanged,
   });
   @override
-  Widget build(BuildContext context) => ClipRRect(
-    borderRadius: BorderRadius.circular(16),
-    child: mx.MiuixTabRowWithContour(
-      tabs: labels,
-      selectedTabIndex: selected,
-      onTabSelected: onChanged,
-      itemSpacing: 0,
-      colors: mx.MiuixTabRowColors(
-        backgroundColor: ink(context).withValues(alpha: .045),
-        contentColor: muted(context),
-        selectedBackgroundColor: isDark(context)
-            ? Colors.white.withValues(alpha: .16)
-            : Colors.white.withValues(alpha: .95),
-        selectedContentColor: accentInk(context),
+  Widget build(BuildContext context) {
+    final reduce = MediaQuery.disableAnimationsOf(context);
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(16),
+      child: ColoredBox(
+        color: ink(context).withValues(alpha: .045),
+        child: Padding(
+          padding: const EdgeInsets.all(4),
+          child: LayoutBuilder(
+            builder: (context, bounds) {
+              final width = bounds.maxWidth / labels.length;
+              return Stack(
+                children: [
+                  if (selected >= 0 && selected < labels.length)
+                    Positioned(
+                      top: 0,
+                      bottom: 0,
+                      left: 0,
+                      width: width,
+                      child: AnimatedSlide(
+                        offset: Offset(selected.toDouble(), 0),
+                        duration: reduce
+                            ? Duration.zero
+                            : const Duration(milliseconds: 165),
+                        curve: studioEaseOut,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(13),
+                            color: Colors.white.withValues(
+                              alpha: isDark(context) ? .16 : .95,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  Row(
+                    children: [
+                      for (final (index, label) in labels.indexed)
+                        Expanded(
+                          child: Semantics(
+                            button: true,
+                            selected: selected == index,
+                            child: GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTap: () => onChanged(index),
+                              child: ConstrainedBox(
+                                constraints: const BoxConstraints(
+                                  minHeight: 40,
+                                ),
+                                child: Center(
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 3,
+                                      vertical: 6,
+                                    ),
+                                    child: Text(
+                                      label,
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w600,
+                                        color: selected == index
+                                            ? accentInk(context)
+                                            : muted(context),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
       ),
-      minWidth: 0,
-      maxWidth: double.infinity,
-      height: 48,
-      cornerRadius: 16,
-    ),
-  );
+    );
+  }
 }
 
 class GlassSlider extends StatelessWidget {
@@ -792,45 +955,81 @@ class _AuroraBusyButtonState extends State<AuroraBusyButton>
   );
 }
 
-Future<void> showZoomImage(BuildContext context, ImageProvider image) =>
-    showDialog<void>(
-      context: context,
-      barrierColor: Colors.black87,
-      builder: (ctx) => Dialog.fullscreen(
-        backgroundColor: const Color(0xff101116),
-        child: SafeArea(
-          child: Stack(
-            children: [
-              Positioned.fill(
-                child: InteractiveViewer(
-                  minScale: .5,
-                  maxScale: 10,
-                  child: Center(
-                    child: Image(
-                      image: image,
-                      fit: BoxFit.contain,
-                      errorBuilder: (_, _, _) => const Icon(
-                        Icons.broken_image_outlined,
-                        color: Colors.white,
-                      ),
-                    ),
+Future<T?> studioDialog<T>({
+  required BuildContext context,
+  required WidgetBuilder builder,
+  Color barrierColor = Colors.black54,
+  bool instant = false,
+}) => showGeneralDialog<T>(
+  context: context,
+  barrierColor: barrierColor,
+  barrierDismissible: true,
+  barrierLabel: '关闭弹窗',
+  transitionDuration: instant || MediaQuery.disableAnimationsOf(context)
+      ? Duration.zero
+      : const Duration(milliseconds: 170),
+  pageBuilder: (context, _, _) => builder(context),
+  transitionBuilder: (_, animation, secondary, child) => ScaleTransition(
+    scale: animation
+        .drive(CurveTween(curve: studioEaseOut))
+        .drive(Tween(begin: .97, end: 1.0)),
+    child: child,
+  ),
+);
+
+Future<void> showZoomImage(
+  BuildContext context,
+  ImageProvider image, {
+  ImageProvider? preview,
+}) => studioDialog<void>(
+  context: context,
+  barrierColor: Colors.black87,
+  instant: true,
+  builder: (ctx) => Dialog.fullscreen(
+    backgroundColor: const Color(0xff101116),
+    child: SafeArea(
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: InteractiveViewer(
+              minScale: .5,
+              maxScale: 10,
+              child: Center(
+                child: Image(
+                  image: image,
+                  fit: BoxFit.contain,
+                  frameBuilder: preview == null
+                      ? null
+                      : (context, child, frame, _) => frame != null
+                            ? child
+                            : Image(
+                                image: preview,
+                                fit: BoxFit.contain,
+                                errorBuilder: (_, _, _) =>
+                                    const SizedBox.shrink(),
+                              ),
+                  errorBuilder: (_, _, _) => const Icon(
+                    Icons.broken_image_outlined,
+                    color: Colors.white,
                   ),
                 ),
               ),
-              Positioned(
-                top: 12,
-                right: 16,
-                child: GlassIcon(
-                  Icons.close_rounded,
-                  tooltip: '关闭大图',
-                  onTap: () => Navigator.pop(ctx),
-                ),
-              ),
-            ],
+            ),
           ),
-        ),
+          Positioned(
+            top: 12,
+            right: 16,
+            child: GlassIcon(
+              Icons.close_rounded,
+              tooltip: '关闭大图',
+              onTap: () => Navigator.pop(ctx),
+            ),
+          ),
+        ],
       ),
-    );
+    ),
+  ),
+);
 
 class ZoomableImage extends StatelessWidget {
   final ImageProvider image;
@@ -970,13 +1169,10 @@ void toast(BuildContext context, String text) {
                 duration: reduce
                     ? Duration.zero
                     : const Duration(milliseconds: 200),
-                curve: Curves.easeOutCubic,
-                builder: (_, v, child) => Opacity(
-                  opacity: v,
-                  child: Transform.translate(
-                    offset: Offset(0, -12 * (1 - v)),
-                    child: child,
-                  ),
+                curve: studioEaseOut,
+                builder: (_, v, child) => Transform.translate(
+                  offset: Offset(0, -12 * (1 - v)),
+                  child: child,
                 ),
                 child: Glass(
                   blur: false,
@@ -1040,37 +1236,46 @@ Future<T?> glassSheet<T>(
   useSafeArea: true,
   backgroundColor: Colors.transparent,
   barrierColor: Colors.black54,
+  sheetAnimationStyle: MediaQuery.disableAnimationsOf(context)
+      ? AnimationStyle.noAnimation
+      : const AnimationStyle(
+          duration: Duration(milliseconds: 225),
+          reverseDuration: Duration(milliseconds: 175),
+        ),
   builder: (ctx) => Padding(
     padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(ctx).bottom),
-    child: ConstrainedBox(
-      constraints: BoxConstraints(
-        maxHeight: MediaQuery.sizeOf(ctx).height * .92,
-      ),
-      child: Glass(
-        radius: 32,
-        opacity: isDark(ctx) ? .82 : .9,
-        tint: isDark(ctx) ? const Color(0xff222d40) : const Color(0xfff6f8ff),
-        padding: const EdgeInsets.fromLTRB(22, 12, 22, 26),
-        // The modal's slide layout does not expose its paint translation to
-        // region captures. Share a normal inner layer for the controls instead.
-        child: lgr.LiquidGlassLayer(
-          settings: glassSettings(ctx),
-          child: _GlassScope(
-            insideGlass: false,
-            child: scroll
-                ? SingleChildScrollView(
-                    child: Column(
+    child: SafeArea(
+      top: false,
+      child: LayoutBuilder(
+        builder: (ctx, bounds) => ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: bounds.maxHeight * .94),
+          child: GlassMotionScope(
+            staticSurface: true,
+            child: Glass(
+              radius: 30,
+              blur: false,
+              opacity: .98,
+              tint: isDark(ctx)
+                  ? const Color(0xff222d40)
+                  : const Color(0xfff6f8ff),
+              padding: const EdgeInsets.fromLTRB(22, 12, 22, 18),
+              child: scroll
+                  ? SingleChildScrollView(
+                      keyboardDismissBehavior:
+                          ScrollViewKeyboardDismissBehavior.onDrag,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [_handle(ctx), child],
+                      ),
+                    )
+                  : Column(
                       mainAxisSize: MainAxisSize.min,
-                      children: [_handle(ctx), child],
+                      children: [
+                        _handle(ctx),
+                        Flexible(child: child),
+                      ],
                     ),
-                  )
-                : Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      _handle(ctx),
-                      Flexible(child: child),
-                    ],
-                  ),
+            ),
           ),
         ),
       ),

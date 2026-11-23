@@ -366,7 +366,8 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 60));
       final toolbar = find.byKey(const ValueKey('artwork-selection-toolbar'));
-      final progress = tester.widget<FadeTransition>(toolbar).opacity.value;
+      final progress =
+          1 - tester.widget<SlideTransition>(toolbar).position.value.dy / .25;
       expect(progress, greaterThan(0));
       expect(progress, lessThan(1));
       expect(haptics, contains('HapticFeedbackType.mediumImpact'));
@@ -389,7 +390,7 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 60));
       expect(
-        tester.widget<FadeTransition>(toolbar).opacity.value,
+        1 - tester.widget<SlideTransition>(toolbar).position.value.dy / .25,
         inExclusiveRange(0, 1),
       );
       await tester.pumpAndSettle();
@@ -403,7 +404,10 @@ void main() {
       await tester.pumpAndSettle();
       await tester.longPress(find.text('选择检查'));
       await tester.pump();
-      expect(tester.widget<FadeTransition>(toolbar).opacity.value, 1);
+      expect(
+        1 - tester.widget<SlideTransition>(toolbar).position.value.dy / .25,
+        1,
+      );
       expect(haptics, isEmpty);
       await tester.pumpWidget(const SizedBox.shrink());
       expect(tester.takeException(), isNull);
@@ -829,7 +833,11 @@ void main() {
         await storage.scan();
       });
       await tester.pumpAndSettle();
-      await tester.ensureVisible(find.text('计算可节省空间'));
+      await tester.scrollUntilVisible(
+        find.text('计算可节省空间'),
+        170,
+        scrollable: find.byType(Scrollable).last,
+      );
       await tester.pumpAndSettle();
       final dynamic storageState = tester.state(find.byType(StorageSettings));
       late Future<void> operation;
@@ -948,7 +956,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('外观'));
       await tester.pumpAndSettle();
-      expect(find.text('显示模式'), findsOneWidget);
+      expect(find.text('浅色模式'), findsOneWidget);
       expect(find.text('主题氛围'), findsOneWidget);
       await tester.scrollUntilVisible(
         find.text('玻璃材质'),
@@ -1229,7 +1237,17 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('设置').last);
       await tester.pumpAndSettle();
-      await tester.ensureVisible(find.text('关于琉光'));
+      final settingsScroll = find
+          .descendant(
+            of: find.byType(SettingsScreen),
+            matching: find.byType(Scrollable),
+          )
+          .first;
+      await tester.scrollUntilVisible(
+        find.text('关于琉光'),
+        180,
+        scrollable: settingsScroll,
+      );
       await tester.pumpAndSettle();
       await tester.tap(find.text('关于琉光'));
       await tester.pumpAndSettle();

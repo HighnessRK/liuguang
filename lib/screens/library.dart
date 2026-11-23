@@ -144,13 +144,13 @@ class _LibraryScreenState extends State<LibraryScreen>
   final search = TextEditingController();
   late final selectionAnimation = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 260),
-    reverseDuration: const Duration(milliseconds: 180),
+    duration: const Duration(milliseconds: 195),
+    reverseDuration: const Duration(milliseconds: 145),
   );
   late final selectionCurve = CurvedAnimation(
     parent: selectionAnimation,
-    curve: Curves.easeOutCubic,
-    reverseCurve: Curves.easeOutCubic,
+    curve: studioEaseOut,
+    reverseCurve: studioEaseOut,
   );
 
   void updateSelection(VoidCallback change, {bool longPress = false}) {
@@ -262,14 +262,11 @@ class _LibraryScreenState extends State<LibraryScreen>
               tween: Tween(begin: hiddenSpace ? 0.0 : 1.0, end: 1),
               duration: MediaQuery.disableAnimationsOf(context)
                   ? Duration.zero
-                  : const Duration(milliseconds: 280),
-              curve: Curves.easeOutCubic,
-              builder: (_, value, child) => Opacity(
-                opacity: value,
-                child: Transform.translate(
-                  offset: Offset(0, 22 * (1 - value)),
-                  child: child,
-                ),
+                  : const Duration(milliseconds: 190),
+              curve: studioEaseOut,
+              builder: (_, value, child) => Transform.translate(
+                offset: Offset(0, 18 * (1 - value)),
+                child: child,
               ),
               child: CustomScrollView(
                 physics: const ClampingScrollPhysics(
@@ -585,10 +582,10 @@ class _LibraryScreenState extends State<LibraryScreen>
               offstage: selectionAnimation.isDismissed,
               child: IgnorePointer(ignoring: selected.isEmpty, child: child),
             ),
-            child: FadeTransition(
-              key: const ValueKey('artwork-selection-toolbar'),
-              opacity: selectionCurve,
+            child: GlassMotionScope(
+              staticSurface: true,
               child: SlideTransition(
+                key: const ValueKey('artwork-selection-toolbar'),
                 position: Tween(
                   begin: const Offset(0, .25),
                   end: Offset.zero,
@@ -796,47 +793,74 @@ class _ArtworkHero extends StatelessWidget {
   Widget build(BuildContext context) {
     final thumbnail = _artworkImage(art, 640);
     final base = image(thumbnail, fit);
+    final content = detail
+        ? _ArtworkDetailImage(
+            art: art,
+            lowResolution: base,
+            highResolution: () =>
+                image(_artworkImage(art, 1400), fit, fallback: base),
+          )
+        : base;
+    if (MediaQuery.disableAnimationsOf(context)) return content;
     return Hero(
       tag: 'artwork_${art.id}',
-      flightShuttleBuilder: (context, animation, direction, from, to) =>
-          image(thumbnail, BoxFit.cover),
-      child: detail
-          ? _ArtworkDetailImage(
-              art: art,
-              lowResolution: base,
-              highResolution: () =>
-                  image(_artworkImage(art, 1600), fit, fallback: base),
-            )
-          : base,
+      flightShuttleBuilder: (context, animation, direction, from, to) {
+        final provider = thumbnail;
+        final fit = direction == HeroFlightDirection.push
+            ? BoxFit.contain
+            : BoxFit.cover;
+        return image(provider, fit);
+      },
+      child: content,
     );
   }
 }
 
-class _ArtworkDetailImage extends StatelessWidget {
+class _ArtworkDetailImage extends StatefulWidget {
   const _ArtworkDetailImage({
     required this.art,
     required this.lowResolution,
     required this.highResolution,
   });
-
   final Artwork art;
   final Widget lowResolution;
   final Widget Function() highResolution;
+  @override
+  State<_ArtworkDetailImage> createState() => _ArtworkDetailImageState();
+}
+
+class _ArtworkDetailImageState extends State<_ArtworkDetailImage> {
+  Animation<double>? transition;
+  bool settled = false;
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final animation = ModalRoute.of(context)?.animation;
+    if (transition == animation) return;
+    transition?.removeStatusListener(onStatus);
+    transition = animation;
+    if (animation?.isCompleted != false) settled = true;
+    animation?.addStatusListener(onStatus);
+  }
+
+  void onStatus(AnimationStatus status) {
+    if (status == AnimationStatus.completed && !settled)
+      setState(() => settled = true);
+  }
 
   @override
-  Widget build(BuildContext context) {
-    final animation = ModalRoute.of(context)?.animation;
-    if (animation == null ||
-        math.max(art.width, art.height) <= 640 ||
-        art.path.toLowerCase().endsWith('.gif'))
-      return lowResolution;
-    return ListenableBuilder(
-      listenable: animation,
-      child: lowResolution,
-      builder: (context, child) =>
-          animation.isCompleted ? highResolution() : child!,
-    );
+  void dispose() {
+    transition?.removeStatusListener(onStatus);
+    super.dispose();
   }
+
+  @override
+  Widget build(BuildContext context) =>
+      settled &&
+          math.max(widget.art.width, widget.art.height) > 640 &&
+          !widget.art.path.toLowerCase().endsWith('.gif')
+      ? widget.highResolution()
+      : widget.lowResolution;
 }
 
 Future<void> openArtwork(
@@ -847,11 +871,18 @@ Future<void> openArtwork(
   ValueChanged<String>? onReuse,
 }) => Navigator.push(
   context,
-  MaterialPageRoute(
-    allowSnapshotting: false,
+  PageRouteBuilder<void>(
     settings: const RouteSettings(name: 'artwork_detail'),
-    builder: (_) =>
+    transitionDuration: MediaQuery.disableAnimationsOf(context)
+        ? Duration.zero
+        : const Duration(milliseconds: 155),
+    reverseTransitionDuration: MediaQuery.disableAnimationsOf(context)
+        ? Duration.zero
+        : const Duration(milliseconds: 125),
+    pageBuilder: (_, _, _) =>
         ArtworkDetail(store: store, art: art, onEdit: onEdit, onReuse: onReuse),
+    transitionsBuilder: (_, animation, secondary, child) =>
+        StudioRouteMotion(animation: animation, artwork: true, child: child),
   ),
 );
 
@@ -873,49 +904,11 @@ class ArtworkDetail extends StatefulWidget {
 
 class _ArtworkDetailState extends State<ArtworkDetail> {
   bool busy = false;
-  final previewKey = GlobalKey();
-  Future<void> preview() async {
-    final art = widget.art;
-    final box = previewKey.currentContext?.findRenderObject();
-    if (Platform.isAndroid &&
-        box is RenderBox &&
-        box.hasSize &&
-        !MediaQuery.disableAnimationsOf(context) &&
-        !art.path.toLowerCase().endsWith('.gif')) {
-      final size = applyBoxFit(
-        BoxFit.contain,
-        Size(art.width.toDouble(), art.height.toDouble()),
-        box.size,
-      ).destination;
-      final origin = box.localToGlobal(
-        Offset(
-          (box.size.width - size.width) / 2,
-          (box.size.height - size.height) / 2,
-        ),
-      );
-      final ratio = View.of(context).devicePixelRatio;
-      try {
-        final started = await native.invokeMethod<bool>('openSharedArtwork', {
-          'path': art.path,
-          'bounds': [
-            origin.dx * ratio,
-            origin.dy * ratio,
-            (origin.dx + size.width) * ratio,
-            (origin.dy + size.height) * ratio,
-          ],
-        });
-        await AppLog.record(
-          started == true ? 'shared_view_open' : 'shared_view_fallback',
-        );
-        if (started == true) return;
-      } on PlatformException {
-        await AppLog.record('shared_view_error');
-      } on MissingPluginException {
-        // Flutter preview remains available in test builds and other installations.
-      }
-    }
-    if (mounted) await showZoomImage(context, FileImage(File(art.path)));
-  }
+  Future<void> preview() => showZoomImage(
+    context,
+    FileImage(File(widget.art.path)),
+    preview: _artworkImage(widget.art, 640),
+  );
 
   Future<void> action(Future<void> Function() run) async {
     if (busy) {
@@ -991,7 +984,6 @@ class _ArtworkDetailState extends State<ArtworkDetail> {
               ClipRRect(
                 borderRadius: BorderRadius.circular(27),
                 child: SizedBox(
-                  key: previewKey,
                   height: 380,
                   child: InteractiveViewer(
                     minScale: .5,

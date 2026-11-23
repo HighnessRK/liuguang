@@ -925,7 +925,7 @@ class _EditorScreenState extends State<EditorScreen>
             GlassIcon(
               Icons.fullscreen_rounded,
               tooltip: '查看大图',
-              onTap: () => showDialog<void>(
+              onTap: () => studioDialog<void>(
                 context: context,
                 builder: (ctx) => Dialog.fullscreen(
                   backgroundColor: Colors.black,

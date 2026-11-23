@@ -89,6 +89,7 @@ class LiuguangApp extends StatelessWidget {
           'dark' => ThemeMode.dark,
           _ => ThemeMode.system,
         },
+        themeAnimationStyle: AnimationStyle.noAnimation,
         theme: _theme(Brightness.light),
         darkTheme: _theme(Brightness.dark),
         builder: (context, child) => mx.MiuixTheme(
@@ -424,9 +425,9 @@ class StudioScrollBehavior extends MaterialScrollBehavior {
 class StudioPageTransitions extends PageTransitionsBuilder {
   const StudioPageTransitions();
   @override
-  Duration get transitionDuration => const Duration(milliseconds: 225);
+  Duration get transitionDuration => const Duration(milliseconds: 180);
   @override
-  Duration get reverseTransitionDuration => const Duration(milliseconds: 190);
+  Duration get reverseTransitionDuration => const Duration(milliseconds: 145);
   @override
   Widget buildTransitions<T>(
     PageRoute<T> route,
@@ -436,15 +437,10 @@ class StudioPageTransitions extends PageTransitionsBuilder {
     Widget child,
   ) {
     if (MediaQuery.disableAnimationsOf(context)) return child;
-    final eased = animation.drive(CurveTween(curve: Curves.easeOutCubic));
-    return FadeTransition(
-      opacity: animation.drive(Tween(begin: .65, end: 1.0)),
-      child: SlideTransition(
-        position: eased.drive(
-          Tween(begin: const Offset(.07, 0), end: Offset.zero),
-        ),
-        child: RepaintBoundary(child: child),
-      ),
+    return StudioRouteMotion(
+      animation: animation,
+      artwork: route.settings.name == 'artwork_detail',
+      child: child,
     );
   }
 }

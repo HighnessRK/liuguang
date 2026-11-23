@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -28,10 +31,12 @@ class _AssistantScreenState extends State<AssistantScreen> {
   bool busy = false;
   CancelToken? token;
   String? attachedImage;
-  bool imageBusy = false;
+  Timer? streamFlush;
+  bool followStream = true;
   @override
   void dispose() {
     token?.cancel();
+    streamFlush?.cancel();
     input.dispose();
     scroll.dispose();
     super.dispose();
@@ -48,47 +53,67 @@ class _AssistantScreenState extends State<AssistantScreen> {
     }
     final text = input.text.trim();
     final image = attachedImage;
+    final request = token = CancelToken();
+    final messages = widget.store.messages;
+    final userIndex = messages.length;
+    int? replyIndex;
+    String latest = '';
+    followStream = true;
     input.clear();
-    setState(() => attachedImage = null);
-    widget.store.messages.add(ChatMessage('user', text));
-    await widget.store.saveCatalog();
-    setState(() => busy = true);
-    token = CancelToken();
+    setState(() {
+      attachedImage = null;
+      busy = true;
+      messages.add(ChatMessage('user', text.isEmpty ? '请分析我上传的图片。' : text));
+    });
+    _toEnd();
     try {
+      await widget.store.saveCatalog();
       final visual = image == null
           ? ''
           : await widget.api.describeImage(
               image,
               goal: 'assistant',
-              cancelToken: token,
+              cancelToken: request,
             );
-      final history = widget.store.messages.takeLast(30);
-      if (visual.isNotEmpty)
-        widget.store.messages.add(ChatMessage('user', '图片理解：$visual'));
-      if (text.isNotEmpty) widget.store.messages.add(ChatMessage('user', text));
-      final position = widget.store.messages.length;
-      widget.store.messages.add(ChatMessage('assistant', ''));
+      if (!mounted || request.isCancelled) return;
+      final history = messages.takeLast(30);
+      if (visual.isNotEmpty) {
+        final content = '${messages[userIndex].text}\n\n图片理解：$visual';
+        history[history.length - 1] = ChatMessage('user', content);
+      }
+      replyIndex = messages.length;
+      messages.add(ChatMessage('assistant', ''));
+      final index = replyIndex;
       final reply = await widget.api.chat(
         history,
-        cancelToken: token,
-        onText: (text) {
-          if (mounted) {
-            setState(
-              () => widget.store.messages[position] = ChatMessage(
-                'assistant',
-                text,
-              ),
-            );
+        cancelToken: request,
+        onText: (chunk) {
+          latest = chunk;
+          streamFlush ??= Timer(const Duration(milliseconds: 55), () {
+            streamFlush = null;
+            if (!mounted) return;
+            setState(() => messages[index] = ChatMessage('assistant', latest));
             _toEnd();
-          }
+          });
         },
       );
-      widget.store.messages[position] = ChatMessage('assistant', reply);
+      streamFlush?.cancel();
+      streamFlush = null;
+      if (visual.isNotEmpty) messages[userIndex] = history.last;
+      messages[index] = ChatMessage('assistant', reply);
       await widget.store.saveCatalog();
     } catch (e) {
-      if (mounted) {
-        toast(context, describeError(e));
+      streamFlush?.cancel();
+      streamFlush = null;
+      if (replyIndex != null &&
+          messages.length > replyIndex &&
+          latest.trim().isEmpty) {
+        messages.removeAt(replyIndex);
+      } else if (replyIndex != null && messages.length > replyIndex) {
+        messages[replyIndex] = ChatMessage('assistant', latest);
       }
+      if (mounted && !request.isCancelled) toast(context, describeError(e));
+      await widget.store.saveCatalog();
     } finally {
       if (mounted) {
         setState(() => busy = false);
@@ -98,14 +123,11 @@ class _AssistantScreenState extends State<AssistantScreen> {
   }
 
   void _toEnd() => WidgetsBinding.instance.addPostFrameCallback((_) {
-    if (scroll.hasClients) {
-      scroll.animateTo(
-        scroll.position.maxScrollExtent,
-        duration: const Duration(milliseconds: 220),
-        curve: Curves.easeOut,
-      );
+    if (mounted && scroll.hasClients && followStream) {
+      scroll.jumpTo(scroll.position.maxScrollExtent);
     }
   });
+
   @override
   Widget build(BuildContext context) => Scaffold(
     body: StudioBackground(
@@ -215,94 +237,140 @@ class _AssistantScreenState extends State<AssistantScreen> {
                         },
                       ),
                     )
-                  : ListView.builder(
-                      controller: scroll,
-                      padding: const EdgeInsets.all(20),
-                      itemCount: widget.store.messages.length,
-                      itemBuilder: (context, i) {
-                        final message = widget.store.messages[i];
-                        final user = message.role == 'user';
-                        return Padding(
-                          padding: const EdgeInsets.only(bottom: 17),
-                          child: Align(
-                            alignment: user
-                                ? Alignment.centerRight
-                                : Alignment.centerLeft,
-                            child: Glass(
-                              opacity: user ? .78 : null,
-                              tint: user
-                                  ? accent(context).withValues(alpha: .8)
-                                  : null,
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    user ? '你' : '琉光助手',
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: user
-                                          ? primaryOn(context, opacity: .78)
-                                          : accentInk(context),
+                  : NotificationListener<ScrollNotification>(
+                      onNotification: (notice) {
+                        if (notice is ScrollUpdateNotification &&
+                            notice.dragDetails != null) {
+                          followStream = notice.metrics.extentAfter < 55;
+                        }
+                        return false;
+                      },
+                      child: ListView.builder(
+                        controller: scroll,
+                        padding: const EdgeInsets.all(20),
+                        itemCount: widget.store.messages.length,
+                        itemBuilder: (context, i) {
+                          final message = widget.store.messages[i];
+                          final user = message.role == 'user';
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 17),
+                            child: Align(
+                              alignment: user
+                                  ? Alignment.centerRight
+                                  : Alignment.centerLeft,
+                              child: Glass(
+                                opacity: user ? .78 : null,
+                                tint: user
+                                    ? accent(context).withValues(alpha: .8)
+                                    : null,
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      user ? '你' : '琉光助手',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: user
+                                            ? primaryOn(context, opacity: .78)
+                                            : accentInk(context),
+                                      ),
                                     ),
-                                  ),
-                                  const SizedBox(height: 9),
-                                  StudioSelectable(
-                                    message.text,
-                                    style: TextStyle(
-                                      color: user
-                                          ? primaryOn(context, opacity: .78)
-                                          : ink(context),
-                                      fontSize: 14,
-                                      height: 1.8,
+                                    const SizedBox(height: 9),
+                                    StudioSelectable(
+                                      message.text,
+                                      style: TextStyle(
+                                        color: user
+                                            ? primaryOn(context, opacity: .78)
+                                            : ink(context),
+                                        fontSize: 14,
+                                        height: 1.8,
+                                      ),
                                     ),
-                                  ),
-                                  if (!user) ...[
-                                    const SizedBox(height: 12),
-                                    Row(
-                                      children: [
-                                        GestureDetector(
-                                          behavior: HitTestBehavior.opaque,
-                                          onTap: () {
-                                            Clipboard.setData(
-                                              ClipboardData(text: message.text),
-                                            );
-                                            toast(context, '已复制');
-                                          },
-                                          child: Text(
-                                            '复制',
-                                            style: TextStyle(
-                                              fontSize: 12,
-                                              color: muted(context),
-                                            ),
-                                          ),
-                                        ),
-                                        const SizedBox(width: 22),
-                                        if (widget.onUsePrompt != null)
+                                    if (!user) ...[
+                                      const SizedBox(height: 12),
+                                      Row(
+                                        children: [
                                           GestureDetector(
                                             behavior: HitTestBehavior.opaque,
                                             onTap: () {
-                                              widget.onUsePrompt!(message.text);
-                                              Navigator.pop(context);
+                                              Clipboard.setData(
+                                                ClipboardData(
+                                                  text: message.text,
+                                                ),
+                                              );
+                                              toast(context, '已复制');
                                             },
                                             child: Text(
-                                              '用作提示词 ↗',
+                                              '复制',
                                               style: TextStyle(
                                                 fontSize: 12,
-                                                color: accentInk(context),
+                                                color: muted(context),
                                               ),
                                             ),
                                           ),
-                                      ],
-                                    ),
+                                          const SizedBox(width: 22),
+                                          if (widget.onUsePrompt != null)
+                                            GestureDetector(
+                                              behavior: HitTestBehavior.opaque,
+                                              onTap: () {
+                                                widget.onUsePrompt!(
+                                                  message.text,
+                                                );
+                                                Navigator.pop(context);
+                                              },
+                                              child: Text(
+                                                '用作提示词 ↗',
+                                                style: TextStyle(
+                                                  fontSize: 12,
+                                                  color: accentInk(context),
+                                                ),
+                                              ),
+                                            ),
+                                        ],
+                                      ),
+                                    ],
                                   ],
-                                ],
+                                ),
                               ),
                             ),
-                          ),
-                        );
-                      },
+                          );
+                        },
+                      ),
                     ),
             ),
+            if (attachedImage case final path?)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 4, 20, 2),
+                child: Row(
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: ZoomableImage(
+                        image: FileImage(File(path)),
+                        child: Image.file(
+                          File(path),
+                          width: 54,
+                          height: 54,
+                          cacheWidth: 160,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, _, _) => const SizedBox(
+                            width: 54,
+                            height: 54,
+                            child: Icon(Icons.broken_image_outlined),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    const Expanded(child: Text('已添加图片')),
+                    GlassIcon(
+                      Icons.close_rounded,
+                      tooltip: '移除图片',
+                      onTap: () => setState(() => attachedImage = null),
+                    ),
+                  ],
+                ),
+              ),
             if (busy)
               Padding(
                 padding: const EdgeInsets.all(10),
@@ -312,7 +380,7 @@ class _AssistantScreenState extends State<AssistantScreen> {
                     const SizedBox(
                       width: 12,
                       height: 12,
-                      child: CircularProgressIndicator(strokeWidth: 1.5),
+                      child: StudioProgress(strokeWidth: 1.5),
                     ),
                     const SizedBox(width: 10),
                     const Text('正在思考…', style: TextStyle(fontSize: 14)),
@@ -328,7 +396,7 @@ class _AssistantScreenState extends State<AssistantScreen> {
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
               child: Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
+                crossAxisAlignment: CrossAxisAlignment.center,
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   GlassIcon(
@@ -348,7 +416,7 @@ class _AssistantScreenState extends State<AssistantScreen> {
                   GlassIcon(
                     Icons.arrow_upward_rounded,
                     tooltip: '发送',
-                    onTap: send,
+                    onTap: busy ? null : send,
                   ),
                 ],
               ),

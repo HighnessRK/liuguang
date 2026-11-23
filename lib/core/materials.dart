@@ -4,7 +4,6 @@ class StudioMaterial {
   const StudioMaterial(this.id, this.category, this.name, this.description);
   String get preview => 'assets/materials/$id.webp';
 }
-
 const materialCategories = ['光透', '毛绒', '金属', '自然', '软塑', '织物'];
 const studioMaterials = [
   StudioMaterial("liquid_glass", "光透", "液态玻璃", "流动感透明玻璃，圆润边缘，清晰折射与细腻焦散"),
@@ -46,7 +45,6 @@ StudioMaterial? materialById(String? id) {
   }
   return null;
 }
-
 String withMaterial(String original, String? id) {
   final material = materialById(id);
   if (material == null) return original;

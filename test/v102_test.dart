@@ -53,8 +53,8 @@ void main() {
     expect(studioMaterials.where((m) => m.category == '毛绒').length, 6);
     for (final m in studioMaterials) {
       final image = img.decodeWebP(File(m.preview).readAsBytesSync())!;
-      expect(image.width, 256);
-      expect(image.height, 256);
+      expect(image.width, 384);
+      expect(image.height, 384);
       expect(withMaterial('原始提示词，不修改', m.id), startsWith('原始提示词，不修改\n\n'));
     }
     expect(withMaterial('原文', null), '原文');

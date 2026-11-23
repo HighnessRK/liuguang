@@ -5,7 +5,8 @@ import 'package:flutter/services.dart';
 
 import '../core/store.dart';
 import '../ui/glass.dart';
-import 'settings.dart' show SettingsDetail, AppearanceSettings, settingRow;
+import 'settings.dart'
+    show SettingsDetail, AppearanceSettings, SettingsPanel, settingRow;
 
 const launcherGlyphs = {
   'spark': '星芒',
@@ -222,7 +223,7 @@ class PersonalizationSettings extends StatelessWidget {
   Widget build(BuildContext context) => SettingsDetail(
     title: '个性化',
     children: [
-      Glass(
+      SettingsPanel(
         padding: const EdgeInsets.symmetric(horizontal: 16),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -239,7 +240,6 @@ class PersonalizationSettings extends StatelessWidget {
                 ),
               ),
             ),
-            Divider(height: 1, color: muted(context).withValues(alpha: .1)),
             settingRow(
               context,
               Icons.apps_rounded,

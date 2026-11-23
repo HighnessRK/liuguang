@@ -75,6 +75,7 @@ class _StickerCharacterCreatorScreenState
       toast(context, '请先填写角色名称，再添加三视图');
       return;
     }
+    FocusManager.instance.primaryFocus?.unfocus();
     final source = await glassSheet<String>(
       context,
       Column(
@@ -196,13 +197,7 @@ class _StickerCharacterCreatorScreenState
         description: withStickerProps(description.text),
         references: savedPaths,
       );
-      final all = readStickerProfiles(widget.store)
-        ..removeWhere((p) => p.id == id)
-        ..add(profile);
-      await widget.store.prefs.setStringList(
-        'sticker_profiles',
-        all.map((p) => jsonEncode(p.toJson())).toList(),
-      );
+      await saveStickerProfile(widget.store, profile);
       if (mounted) Navigator.pop(context, profile);
     } catch (e) {
       if (mounted) toast(context, describeError(e));
@@ -213,93 +208,101 @@ class _StickerCharacterCreatorScreenState
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    body: StudioBackground(
-      child: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(24, 8, 24, 30),
-          children: [
-            PageHeader(
-              title: widget.profile == null ? '创建表情角色' : '编辑表情角色',
-              action: GlassIcon(
-                Icons.arrow_back_rounded,
-                tooltip: '返回',
-                onTap: () => Navigator.pop(context),
+    body: GlassMotionScope(
+      staticSurface: true,
+      child: StudioBackground(
+        child: SafeArea(
+          child: ListView(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+            children: [
+              PageHeader(
+                title: widget.profile == null ? '创建表情角色' : '编辑表情角色',
+                action: GlassIcon(
+                  Icons.arrow_back_rounded,
+                  tooltip: '返回',
+                  onTap: () => Navigator.pop(context),
+                ),
               ),
-            ),
-            const SectionLabel('角色名称'),
-            GlassField(readOnly: busy, controller: name, hint: '例如：蓝莓小猫'),
-            const SectionLabel('角色三视图'),
-            Glass(
-              child: Column(
-                children: [
-                  if (references.isEmpty)
-                    Text(
-                      '上传正面、侧面、背面或其他能固定角色特征的参考图。',
-                      style: TextStyle(color: muted(context), height: 1.6),
-                    )
-                  else
-                    SizedBox(
-                      height: 118,
-                      child: Row(
-                        children: [
-                          for (final path in references)
-                            Expanded(
-                              child: Padding(
-                                padding: const EdgeInsets.only(right: 8),
-                                child: ClipRRect(
-                                  borderRadius: BorderRadius.circular(14),
-                                  child: Image.file(
-                                    File(path),
-                                    fit: BoxFit.cover,
-                                  ),
-                                ),
-                              ),
-                            ),
-                        ],
+              const SectionLabel('角色名称'),
+              GlassField(readOnly: busy, controller: name, hint: '例如：蓝莓小猫'),
+              const SectionLabel('角色三视图'),
+              Glass(
+                blur: false,
+                child: Column(
+                  children: [
+                    if (references.isEmpty)
+                      Text(
+                        '上传正面、侧面、背面或其他能固定角色特征的参考图。',
+                        style: TextStyle(color: muted(context), height: 1.6),
+                      )
+                    else
+                      StickerReferencePreview(
+                        images: references
+                            .map((path) => FileImage(File(path)))
+                            .toList(),
                       ),
+                    const SizedBox(height: 12),
+                    GlassButton(
+                      references.isEmpty ? '添加三视图' : '重新选择三视图',
+                      icon: Icons.add_photo_alternate_outlined,
+                      onTap: busy ? null : pickReferences,
                     ),
-                  const SizedBox(height: 12),
-                  GlassButton(
-                    references.isEmpty ? '添加三视图' : '重新选择三视图',
-                    icon: Icons.add_photo_alternate_outlined,
-                    onTap: busy ? null : pickReferences,
+                  ],
+                ),
+              ),
+              const SectionLabel('基本描述'),
+              GlassField(
+                readOnly: busy,
+                controller: description,
+                onChanged: (_) => setState(() {}),
+                hint: '描述角色的身份、性格、服饰、配色和不可改变特征…',
+                minLines: 4,
+                maxLines: 8,
+              ),
+              const SizedBox(height: 16),
+              if (analyzing || polishing) ...[
+                Glass(
+                  radius: 16,
+                  blur: false,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 12,
                   ),
-                ],
-              ),
-            ),
-            const SectionLabel('基本描述'),
-            GlassField(
-              readOnly: busy,
-              controller: description,
-              onChanged: (_) => setState(() {}),
-              hint: '描述角色的身份、性格、服饰、配色和不可改变特征…',
-              minLines: 4,
-              maxLines: 8,
-            ),
-            const SizedBox(height: 16),
-            if (analyzing || polishing)
-              Text(
-                analyzing ? '正在识别三视图并生成基本描述…' : '正在润色基本描述…',
-                style: TextStyle(color: muted(context)),
-              )
-            else
+                  child: Row(
+                    children: [
+                      const SizedBox.square(
+                        dimension: 18,
+                        child: StudioProgress(),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          analyzing ? '正在识别三视图并生成基本描述…' : '正在润色基本描述…',
+                          style: TextStyle(color: ink(context)),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ] else
+                GlassButton(
+                  '智能润色描述',
+                  icon: Icons.edit_note_rounded,
+                  onTap: busy || description.text.trim().isEmpty
+                      ? null
+                      : polishDescription,
+                ),
+              const SizedBox(height: 12),
               GlassButton(
-                '智能润色描述',
-                icon: Icons.edit_note_rounded,
-                onTap: busy || description.text.trim().isEmpty
-                    ? null
-                    : polishDescription,
-              ),
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: GlassButton(
                 '保存并开始制作',
+                primary: true,
                 icon: Icons.save_rounded,
+                busy: saving,
                 onTap: busy ? null : save,
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     ),
@@ -323,4 +326,59 @@ List<StickerProfile> readStickerProfiles(AppStore store) {
     }
   }
   return profiles;
+}
+
+Future<void> saveStickerProfile(AppStore store, StickerProfile profile) async {
+  final all = readStickerProfiles(store);
+  final index = all.indexWhere((p) => p.id == profile.id);
+  if (index == -1) {
+    all.add(profile);
+  } else {
+    all[index] = profile;
+  }
+  await store.prefs.setStringList(
+    'sticker_profiles',
+    all.map((p) => jsonEncode(p.toJson())).toList(),
+  );
+}
+
+class StickerReferencePreview extends StatelessWidget {
+  final List<ImageProvider> images;
+  const StickerReferencePreview({super.key, required this.images});
+
+  @override
+  Widget build(BuildContext context) => Row(
+    children: [
+      for (final (index, image) in images.indexed) ...[
+        if (index > 0) const SizedBox(width: 8),
+        Expanded(
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(14),
+            child: ColoredBox(
+              color: ink(context).withValues(alpha: .04),
+              child: ZoomableImage(
+                image: image,
+                child: SizedBox(
+                  height: images.length == 1 ? 178 : 112,
+                  width: double.infinity,
+                  child: Image(
+                    image: ResizeImage(
+                      image,
+                      width: images.length == 1 ? 820 : 480,
+                      height: images.length == 1 ? 820 : 480,
+                      policy: ResizeImagePolicy.fit,
+                      allowUpscaling: false,
+                    ),
+                    fit: BoxFit.contain,
+                    errorBuilder: (_, _, _) =>
+                        const Center(child: Icon(Icons.broken_image_outlined)),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    ],
+  );
 }

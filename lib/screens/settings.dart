@@ -17,117 +17,232 @@ import 'usage.dart';
 import 'updates.dart';
 import '../core/updates.dart' show appVersion;
 
-class SettingsScreen extends StatelessWidget {
+class SettingsScreen extends StatefulWidget {
   final AppStore store;
   final StudioApi api;
   const SettingsScreen({super.key, required this.store, required this.api});
-  void open(BuildContext context, Widget page) =>
-      Navigator.push(context, MaterialPageRoute(builder: (_) => page));
   @override
-  Widget build(BuildContext context) => ListView(
-    padding: EdgeInsets.fromLTRB(24, 0, 24, 28 + StudioTabInset.of(context)),
-    children: [
-      const PageHeader(title: '设置'),
-      Glass(
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 2),
-        child: Column(
-          children: [
-            settingRow(
-              context,
-              Icons.hub_outlined,
-              '模型连接',
-              '生图、对话与识图',
-              () => open(context, ConnectionScreen(store: store, api: api)),
-            ),
-            _line(context),
-            settingRow(
-              context,
-              Icons.tune_rounded,
-              '生成偏好',
-              '尺寸、格式与审核',
-              () async {
-                final value = await Navigator.push<GenerationOptions>(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => SettingsDetail(
-                      title: '生成偏好',
-                      children: [GenerationSettings(initial: store.defaults)],
-                    ),
-                  ),
-                );
-                if (value != null) {
-                  store.defaults = value;
-                  await store.saveSettings();
-                }
-              },
-            ),
-            _line(context),
-            settingRow(
-              context,
-              Icons.touch_app_outlined,
-              '交互与辅助',
-              '触感、动效与文字可读性',
-              () => open(context, InteractionSettings(store: store)),
-            ),
-            _line(context),
-            settingRow(
-              context,
-              Icons.auto_awesome_mosaic_outlined,
-              '个性化',
-              '外观主题与桌面图标',
-              () => open(context, PersonalizationSettings(store: store)),
-            ),
-          ],
-        ),
-      ),
-      const SizedBox(height: 16),
-      Glass(
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 2),
-        child: Column(
-          children: [
-            settingRow(
-              context,
-              Icons.bar_chart_rounded,
-              '使用明细',
-              'Token、费用与调用记录',
-              () => open(context, UsageScreen(store: store)),
-            ),
-            _line(context),
-            settingRow(
-              context,
-              Icons.storage_rounded,
-              '存储管理',
-              '作品体积、临时缓存与安装包',
-              () => open(context, StorageSettings(store: store)),
-            ),
-            _line(context),
-            settingRow(
-              context,
-              Icons.system_update_outlined,
-              '应用更新',
-              '检查更新、更新日志与诊断日志',
-              () => open(context, UpdatesScreen(store: store)),
-            ),
-            _line(context),
-            settingRow(
-              context,
-              Icons.info_outline_rounded,
-              '关于琉光',
-              'V$appVersion',
-              () => open(
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  final search = TextEditingController();
+  AppStore get store => widget.store;
+  void open(Widget Function() page) {
+    FocusScope.of(context).unfocus();
+    Navigator.push(context, MaterialPageRoute(builder: (_) => page()));
+  }
+
+  @override
+  void dispose() {
+    search.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final groups = <(String, List<(IconData, String, String, VoidCallback)>)>[
+      (
+        '创作与模型',
+        [
+          (
+            Icons.hub_outlined,
+            '模型连接',
+            '生图、对话与识图',
+            () => open(() => ConnectionScreen(store: store, api: widget.api)),
+          ),
+          (
+            Icons.tune_rounded,
+            '生成偏好',
+            '尺寸、格式与审核',
+            () async {
+              FocusScope.of(context).unfocus();
+              final value = await Navigator.push<GenerationOptions>(
                 context,
-                const SettingsDetail(title: '关于琉光', children: [AboutStudio()]),
+                MaterialPageRoute(
+                  builder: (_) => SettingsDetail(
+                    title: '生成偏好',
+                    children: [GenerationSettings(initial: store.defaults)],
+                  ),
+                ),
+              );
+              if (value != null) {
+                store.defaults = value;
+                await store.saveSettings();
+              }
+            },
+          ),
+          (
+            Icons.bar_chart_rounded,
+            '使用明细',
+            'Token、费用与调用记录',
+            () => open(() => UsageScreen(store: store)),
+          ),
+        ],
+      ),
+      (
+        '显示与交互',
+        [
+          (
+            Icons.auto_awesome_mosaic_outlined,
+            '个性化',
+            '外观主题与桌面图标',
+            () => open(() => PersonalizationSettings(store: store)),
+          ),
+          (
+            Icons.touch_app_outlined,
+            '交互与辅助',
+            '触感、动效与文字大小',
+            () => open(() => InteractionSettings(store: store)),
+          ),
+        ],
+      ),
+      (
+        '应用与数据',
+        [
+          (
+            Icons.storage_rounded,
+            '存储管理',
+            '作品、缓存与安装包',
+            () => open(() => StorageSettings(store: store)),
+          ),
+          (
+            Icons.system_update_outlined,
+            '应用更新',
+            '检查更新、更新日志与诊断日志',
+            () => open(() => UpdatesScreen(store: store)),
+          ),
+          (
+            Icons.info_outline_rounded,
+            '关于琉光',
+            'V$appVersion',
+            () => open(
+              () => const SettingsDetail(
+                title: '关于琉光',
+                children: [AboutStudio()],
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
-    ],
+    ];
+    final query = search.text.trim().toLowerCase();
+    final visible = groups
+        .map(
+          (g) => (
+            g.$1,
+            g.$2
+                .where(
+                  (r) => (r.$2 + r.$3 + g.$1).toLowerCase().contains(query),
+                )
+                .toList(),
+          ),
+        )
+        .where((g) => g.$2.isNotEmpty);
+    return ListView(
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+      padding: EdgeInsets.fromLTRB(14, 36, 14, 18 + StudioTabInset.of(context)),
+      children: [
+        const SettingsHeading('设置'),
+        const SizedBox(height: 18),
+        GlassField(
+          controller: search,
+          hint: '搜索设置项',
+          onChanged: (_) => setState(() {}),
+          suffix: search.text.isEmpty
+              ? const Icon(Icons.search_rounded, size: 22)
+              : IconButton(
+                  tooltip: '清除搜索',
+                  onPressed: () => setState(search.clear),
+                  icon: const Icon(Icons.close_rounded),
+                ),
+        ),
+        if (visible.isEmpty)
+          const EmptyState(
+            icon: Icons.search_off_rounded,
+            title: '没有匹配的设置项',
+            subtitle: '换个关键词试试。',
+          ),
+        for (final (section, items) in visible) ...[
+          SettingsGroupLabel(section),
+          SettingsPanel(
+            child: Column(
+              children: [
+                for (final (icon, label, subtitle, onTap) in items)
+                  settingRow(
+                    context,
+                    icon,
+                    label,
+                    subtitle,
+                    onTap,
+                    inline: true,
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class SettingsHeading extends StatelessWidget {
+  const SettingsHeading(this.title, {super.key});
+  final String title;
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 14),
+    child: Text(
+      title,
+      style: TextStyle(
+        fontSize: 36,
+        height: 1.13,
+        fontWeight: FontWeight.w500,
+        color: ink(context),
+      ),
+    ),
+  );
+}
+
+class SettingsGroupLabel extends StatelessWidget {
+  const SettingsGroupLabel(this.title, {super.key});
+  final String title;
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.fromLTRB(14, 22, 14, 9),
+    child: Text(
+      title,
+      style: TextStyle(
+        color: muted(context),
+        fontSize: 14,
+        fontWeight: FontWeight.w500,
+      ),
+    ),
+  );
+}
+
+class SettingsPanel extends StatelessWidget {
+  const SettingsPanel({
+    super.key,
+    required this.child,
+    this.padding = const EdgeInsets.symmetric(horizontal: 14, vertical: 3),
+  });
+  final Widget child;
+  final EdgeInsetsGeometry padding;
+  @override
+  Widget build(BuildContext context) => DecoratedBox(
+    decoration: BoxDecoration(
+      borderRadius: BorderRadius.circular(22),
+      color: isDark(context)
+          ? const Color(0xff202229)
+          : const Color(0xfffcfcfd),
+    ),
+    child: Padding(padding: padding, child: child),
   );
 }
 
 Widget _line(BuildContext context) =>
-    Divider(height: 1, color: muted(context).withValues(alpha: .1));
+    Divider(height: 1, color: muted(context).withValues(alpha: .10));
 
 class SettingsDetail extends StatelessWidget {
   final String title;
@@ -142,30 +257,24 @@ class SettingsDetail extends StatelessWidget {
     body: StudioBackground(
       child: SafeArea(
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 26),
           children: [
-            Row(
-              children: [
-                GlassIcon(
-                  Icons.arrow_back_rounded,
-                  tooltip: '返回',
-                  onTap: () => Navigator.pop(context),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: IconButton(
+                tooltip: '返回',
+                onPressed: () => Navigator.pop(context),
+                icon: Icon(
+                  Icons.arrow_back_ios_new_rounded,
+                  color: ink(context),
+                  size: 22,
                 ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Text(
-                    title,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ],
+              ),
             ),
-            const SizedBox(height: 28),
+            const SizedBox(height: 22),
+            SettingsHeading(title),
+            const SizedBox(height: 22),
             ...children,
           ],
         ),
@@ -183,14 +292,38 @@ class AppearanceSettings extends StatelessWidget {
     return SettingsDetail(
       title: '外观',
       children: [
-        const SectionLabel('显示模式'),
-        GlassSegments(
-          labels: const ['跟随系统', '浅色', '深色'],
-          selected: ['system', 'light', 'dark'].indexOf(store.theme),
-          onChanged: (i) {
-            store.theme = ['system', 'light', 'dark'][i];
+        Row(
+          children: [
+            for (final (value, label) in [
+              ('light', '浅色模式'),
+              ('dark', '深色模式'),
+            ]) ...[
+              if (value == 'dark') const SizedBox(width: 10),
+              Expanded(
+                child: _AppearanceMode(
+                  value: value,
+                  label: label,
+                  selected:
+                      store.theme == value ||
+                      (store.theme == 'system' &&
+                          isDark(context) == (value == 'dark')),
+                  onTap: () {
+                    store.theme = value;
+                    store.saveSettings();
+                  },
+                ),
+              ),
+            ],
+          ],
+        ),
+        const SizedBox(height: 14),
+        SettingsPanel(
+          child: _toggle(context, '跟随系统', '', store.theme == 'system', (value) {
+            store.theme = value
+                ? 'system'
+                : (isDark(context) ? 'dark' : 'light');
             store.saveSettings();
-          },
+          }),
         ),
         const SectionLabel('主题氛围', caption: '背景与控件一起改变'),
         LayoutBuilder(
@@ -256,8 +389,9 @@ class AppearanceSettings extends StatelessWidget {
             );
           },
         ),
-        const SectionLabel('玻璃材质'),
-        Glass(
+        const SettingsGroupLabel('玻璃材质'),
+        SettingsPanel(
+          padding: const EdgeInsets.all(16),
           child: Column(
             children: [
               GlassSlider(
@@ -300,7 +434,7 @@ class InteractionSettings extends StatelessWidget {
     return SettingsDetail(
       title: '交互与辅助',
       children: [
-        Glass(
+        SettingsPanel(
           child: Column(
             children: [
               _toggle(context, '触感反馈', '轻触时振动', store.haptics, (v) {
@@ -320,8 +454,9 @@ class InteractionSettings extends StatelessWidget {
             ],
           ),
         ),
-        const SectionLabel('文字大小'),
-        Glass(
+        const SettingsGroupLabel('文字大小'),
+        SettingsPanel(
+          padding: const EdgeInsets.all(16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -358,45 +493,203 @@ class InteractionSettings extends StatelessWidget {
   }
 }
 
+class _AppearanceMode extends StatelessWidget {
+  const _AppearanceMode({
+    required this.value,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+  final String value, label;
+  final bool selected;
+  final VoidCallback onTap;
+  @override
+  Widget build(BuildContext context) => Semantics(
+    button: true,
+    selected: selected,
+    child: GestureDetector(
+      onTap: onTap,
+      child: Column(
+        children: [
+          AspectRatio(
+            aspectRatio: 1.15,
+            child: Container(
+              padding: const EdgeInsets.all(4),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(22),
+                border: Border.all(
+                  color: selected
+                      ? const Color(0xff4286f5)
+                      : Colors.transparent,
+                  width: 2,
+                ),
+              ),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(16),
+                  gradient: const LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [Color(0xff4666e5), Color(0xff5eb9f1)],
+                  ),
+                ),
+                child: FractionallySizedBox(
+                  widthFactor: .8,
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      for (var i = 0; i < 2; i++)
+                        Flexible(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4),
+                            child: FractionallySizedBox(
+                              widthFactor: 1,
+                              child: Container(
+                                height: 32,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 11,
+                                ),
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(9),
+                                  color: value == 'dark'
+                                      ? const Color(0x99223367)
+                                      : const Color(0x60e6f3ff),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    for (final width in [.94, .57])
+                                      Flexible(
+                                        child: Padding(
+                                          padding: const EdgeInsets.symmetric(
+                                            vertical: 2,
+                                          ),
+                                          child: FractionallySizedBox(
+                                            widthFactor: width,
+                                            child: DecoratedBox(
+                                              decoration: BoxDecoration(
+                                                color: value == 'dark'
+                                                    ? const Color(0xff94b7e7)
+                                                    : const Color(0xff436ab4),
+                                                borderRadius:
+                                                    BorderRadius.circular(4),
+                                              ),
+                                              child: const SizedBox(height: 4),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 16,
+              color: selected ? accentInk(context) : ink(context),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
 Widget settingRow(
   BuildContext context,
   IconData icon,
   String title,
   String subtitle,
-  VoidCallback onTap,
-) => GestureDetector(
-  behavior: HitTestBehavior.opaque,
-  onTap: onTap,
-  child: Padding(
-    padding: const EdgeInsets.symmetric(vertical: 12),
-    child: Row(
-      children: [
-        Icon(icon, size: 23, color: accentInk(context)),
-        const SizedBox(width: 14),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+  VoidCallback onTap, {
+  bool inline = false,
+}) {
+  final color = switch (title) {
+    '生成偏好' || '个性化' => const Color(0xff7664ee),
+    '使用明细' || '应用更新' => const Color(0xff199762),
+    '存储管理' => const Color(0xffcf7442),
+    '关于琉光' => const Color(0xff70839b),
+    _ => const Color(0xff357de9),
+  };
+  final compact =
+      MediaQuery.textScalerOf(context).scale(1) < 1.25 &&
+      MediaQuery.sizeOf(context).width >= 350;
+  final trailing = inline && compact;
+  return Semantics(
+    button: true,
+    child: GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 60),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          child: Row(
             children: [
-              Text(
-                title,
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
+              Container(
+                width: 31,
+                height: 31,
+                decoration: BoxDecoration(
+                  color: color,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(icon, size: 19, color: Colors.white),
+              ),
+              const SizedBox(width: 13),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w500,
+                        color: ink(context),
+                      ),
+                    ),
+                    if (!trailing && subtitle.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        subtitle,
+                        style: TextStyle(fontSize: 13, color: muted(context)),
+                      ),
+                    ],
+                  ],
                 ),
               ),
-              const SizedBox(height: 7),
-              Text(
-                subtitle,
-                style: TextStyle(fontSize: 12, color: muted(context)),
+              if (trailing && subtitle.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(left: 8),
+                  child: Text(
+                    subtitle,
+                    style: TextStyle(fontSize: 13, color: muted(context)),
+                  ),
+                ),
+              const SizedBox(width: 5),
+              Icon(
+                Icons.chevron_right_rounded,
+                color: muted(context),
+                size: 20,
               ),
             ],
           ),
         ),
-        Icon(Icons.chevron_right_rounded, color: muted(context), size: 21),
-      ],
+      ),
     ),
-  ),
-);
+  );
+}
+
 Widget _toggle(
   BuildContext context,
   String title,
@@ -411,12 +704,14 @@ Widget _toggle(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(title, style: const TextStyle(fontSize: 14)),
-            const SizedBox(height: 6),
-            Text(
-              subtitle,
-              style: TextStyle(fontSize: 12, color: muted(context)),
-            ),
+            Text(title, style: const TextStyle(fontSize: 16)),
+            if (subtitle.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text(
+                subtitle,
+                style: TextStyle(fontSize: 13, color: muted(context)),
+              ),
+            ],
           ],
         ),
       ),
