@@ -192,6 +192,10 @@ class UsageRecord {
   final bool success;
   final double? estimatedCost;
   final String? error;
+  // Used only when recording a diagnostic. These are not catalog fields.
+  final String? diagnosticEvent, diagnosticDetail;
+  final int? diagnosticStatus;
+  final bool cancelled;
   UsageRecord({
     required this.id,
     required this.model,
@@ -204,6 +208,10 @@ class UsageRecord {
     required this.success,
     this.estimatedCost,
     this.error,
+    this.diagnosticEvent,
+    this.diagnosticDetail,
+    this.diagnosticStatus,
+    this.cancelled = false,
   });
   Map<String, dynamic> toJson() => {
     'id': id,

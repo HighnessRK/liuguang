@@ -296,7 +296,7 @@ class _StorageSettingsState extends State<StorageSettings> {
               onTap: busy || logBytes == 0
                   ? null
                   : () async {
-                      if (await confirm(context, '清理本机日志？', '正常与错误日志都将清除。')) {
+                      if (await confirm(context, '清理本机日志？', '已保存的异常日志都将清除。')) {
                         await AppLog.clear();
                         if (mounted) await scan();
                       }

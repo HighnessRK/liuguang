@@ -31,6 +31,7 @@ class ControlledImageApi extends StudioApi {
     CancelToken? cancelToken,
     String operation = '文生图',
     void Function(String)? onStage,
+    Future<void> Function(ImageReply)? onResult,
   }) async {
     calls++;
     onStage?.call('模型正在处理，请稍候');

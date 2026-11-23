@@ -322,14 +322,32 @@ Future<Artwork> saveArtwork(
 void validateStickerGif(Uint8List bytes) {
   final decoder = img.GifDecoder();
   final info = decoder.startDecode(bytes);
-  if (info == null ||
-      info.width != 512 ||
+  const expected = '要求 512 × 512、8 帧、每帧 150 毫秒。';
+  if (info == null) {
+    throw ResultValidationException('服务端返回的文件不是可读取的 GIF。$expected');
+  }
+  if (info.width != 512 ||
       info.height != 512 ||
       info.numFrames != 8 ||
-      info.frames.any((frame) => frame.duration != 15) ||
-      decoder.decode(bytes) == null) {
-    throw StudioException('服务端未返回 512 × 512、8 帧、每帧 150 ms 的有效 GIF');
+      info.frames.any((frame) => frame.duration != 15)) {
+    final durations =
+        info.frames.map((frame) => frame.duration * 10).toSet().toList()
+          ..sort();
+    final timing = durations.isEmpty
+        ? '帧时长未知'
+        : durations.length == 1
+        ? '每帧 ${durations.first} 毫秒'
+        : '帧时长 ${durations.first}–${durations.last} 毫秒';
+    throw ResultValidationException(
+      '服务端返回 ${info.width} × ${info.height}、${info.numFrames} 帧、$timing。$expected',
+    );
   }
+  try {
+    if (decoder.decode(bytes) != null) return;
+  } catch (_) {
+    // A GIF with valid metadata can still contain a damaged frame.
+  }
+  throw ResultValidationException('服务端返回的 GIF 有损坏的画帧。$expected');
 }
 
 Uint8List encodeAnimation(Map<String, dynamic> job) {

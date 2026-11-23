@@ -40,10 +40,13 @@ class LocalModels extends StudioApi {
     CancelToken? cancelToken,
     String operation = '文生图',
     void Function(String)? onStage,
-  }) {
+    Future<void> Function(ImageReply)? onResult,
+  }) async {
     generationOperation = operation;
     onStage?.call('正在生成 25%');
-    return generated.future;
+    final reply = await generated.future;
+    await onResult?.call(reply);
+    return reply;
   }
 }
 

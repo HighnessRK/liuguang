@@ -6,7 +6,7 @@ import 'package:flutter/services.dart';
 
 import 'store.dart';
 
-const appVersion = '1.1.1';
+const appVersion = '1.1.2';
 const releaseNotes = '''修复：作品长按和多选保持滚动位置，表情包生成后打开新作品详情。
 修复：角色切换、编辑和删除统一管理，三视图与角色名称同步。
 新增：关于琉光提供分类日志，支持手动清理及自动保留七天。
@@ -85,7 +85,7 @@ class AppLog {
   static Future<void> init(Directory directory) async {
     file = File('${directory.path}/diagnostics.jsonl');
     _lastPrune = null;
-    await record('application_start');
+    await read().catchError((_) => '');
   }
 
   static Future<void> record(
@@ -96,8 +96,11 @@ class AppLog {
     int? images,
     int? inputTokens,
     int? outputTokens,
+    String? detail,
   }) {
-    if (file == null || !RegExp(r'^[a-z_]{1,80}$').hasMatch(event))
+    if (file == null ||
+        !RegExp(r'^[a-z_]{1,80}$').hasMatch(event) ||
+        !_isAnomaly(event, status, error))
       return Future.value();
     return queue = queue
         .catchError((_) {})
@@ -109,13 +112,32 @@ class AppLog {
               now.difference(_lastPrune!) > const Duration(hours: 1)) {
             await _prune(target, now);
           }
+          final entry = {
+            'time': now.toIso8601String(),
+            'event': event,
+            'level': 'error',
+            'status': ?status,
+            'elapsedMs': ?elapsedMs,
+            'images': ?images,
+            'inputTokens': ?inputTokens,
+            'outputTokens': ?outputTokens,
+            // Only locally generated descriptions from the GIF workflow.
+            if (event == 'sticker_gif_failure' && detail != null)
+              'detail': detail,
+          };
           await target.writeAsString(
-            '${jsonEncode({'time': now.toIso8601String(), 'event': event, 'level': error || (status ?? 0) >= 400 || event.contains('failure') || event.endsWith('_error') ? 'error' : 'info', 'status': ?status, 'elapsedMs': ?elapsedMs, 'images': ?images, 'inputTokens': ?inputTokens, 'outputTokens': ?outputTokens})}\n',
+            '${jsonEncode(entry)}\n',
             mode: FileMode.append,
           );
         })
         .catchError((_) {});
   }
+
+  static bool _isAnomaly(String event, int? status, bool error) =>
+      error ||
+      (status ?? 0) >= 400 ||
+      event.contains('failure') ||
+      event.endsWith('_error');
 
   static Map<String, dynamic>? parse(String line) {
     try {
@@ -132,9 +154,19 @@ class AppLog {
     final cutoff = now.subtract(retention);
     final lines = await target.readAsLines();
     final retained = lines.where((line) {
-      final time = parse(line)?['time'];
+      final entry = parse(line);
+      final time = entry?['time'];
+      final event = entry?['event'];
+      final status = entry?['status'];
       final date = time is String ? DateTime.tryParse(time) : null;
-      return date != null && !date.isBefore(cutoff);
+      return date != null &&
+          !date.isBefore(cutoff) &&
+          event is String &&
+          _isAnomaly(
+            event,
+            status is int ? status : null,
+            entry?['level'] == 'error',
+          );
     }).toList();
     if (retained.length == lines.length) return;
     final tmp = File('${target.path}.tmp');

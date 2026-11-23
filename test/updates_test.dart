@@ -88,14 +88,26 @@ void main() {
             .toIso8601String(),
         'event': 'expired_event',
       });
-      await AppLog.file!.writeAsString('$expired\n', mode: FileMode.append);
+      final legacySuccess = jsonEncode({
+        'time': DateTime.now().toIso8601String(),
+        'event': 'legacy_normal',
+        'level': 'info',
+      });
+      await AppLog.file!.writeAsString(
+        '$expired\n$legacySuccess\n',
+        mode: FileMode.append,
+      );
+      await AppLog.record('sticker_gif_failure', detail: '服务端返回的 GIF 有损坏的画帧。');
       for (var i = 0; i < 305; i++) {
-        await AppLog.record('test_event', status: i);
+        await AppLog.record('test_event', status: i + 400);
       }
       final content = await AppLog.read();
       expect(content, isNot(contains('should_not_appear')));
       expect(const LineSplitter().convert(content).length, 306);
       expect(content, isNot(contains('expired_event')));
+      expect(content, isNot(contains('legacy_normal')));
+      expect(content, isNot(contains('application_start')));
+      expect(content, contains('有损坏的画帧'));
       await AppLog.clear();
       expect(await AppLog.read(), isEmpty);
     } finally {

@@ -221,9 +221,12 @@ class _DeepSeekStickerScreenState extends State<DeepSeekStickerScreen> {
     timer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) setState(() {});
     });
+    var generationStarted = false;
+    var describing = false;
     try {
       await beginProcessing();
       final references = await referencePaths();
+      describing = true;
       final brief = await widget.api.chat([
         ChatMessage(
           'user',
@@ -231,7 +234,9 @@ class _DeepSeekStickerScreenState extends State<DeepSeekStickerScreen> {
         ),
       ], cancelToken: cancel);
       if (!mounted || cancel.isCancelled) return;
-      final reply = await widget.api.generate(
+      generationStarted = true;
+      Artwork? artwork;
+      await widget.api.generate(
         prompt:
             '$brief\n角色设定：${profile.description}\n画面文字：$caption\n'
             '$stickerProps。smooth motion, consistent character。保持帧间一致性，统一角色外形、服装、配色、构图和文字位置。画面铺满画布，去除白边。',
@@ -246,26 +251,39 @@ class _DeepSeekStickerScreenState extends State<DeepSeekStickerScreen> {
               progress = stageProgress(value) ?? progress;
             });
         },
-      );
-      if (!mounted || cancel.isCancelled) return;
-      setState(() {
-        stage = '正在校验并保存';
-        progress = null;
-      });
-      final bytes = reply.images.first;
-      if (animated) await compute(validateStickerGif, bytes);
-      final artwork = await saveArtwork(
-        widget.store,
-        bytes,
-        prompt: caption,
-        model: config.model,
-        kind: kind,
-        format: options.format,
-        parameters: options.toJson(),
+        onResult: (reply) async {
+          if (cancel.isCancelled) throw cancel.cancelError!;
+          if (mounted) {
+            setState(() {
+              stage = '正在校验并保存';
+              progress = null;
+            });
+          }
+          final bytes = reply.images.first;
+          if (animated) await compute(validateStickerGif, bytes);
+          if (cancel.isCancelled) throw cancel.cancelError!;
+          artwork = await saveArtwork(
+            widget.store,
+            bytes,
+            prompt: caption,
+            model: config.model,
+            kind: kind,
+            format: options.format,
+            parameters: options.toJson(),
+          );
+        },
       );
       await widget.store.prefs.setString('last_sticker_profile', profile.id);
-      if (mounted) Navigator.pop(context, artwork);
+      if (mounted && artwork != null) Navigator.pop(context, artwork);
     } catch (e) {
+      if (animated && !generationStarted && !cancel.isCancelled) {
+        await AppLog.record(
+          'sticker_gif_failure',
+          detail: describing
+              ? '对话模型未能生成表情包提示词。请检查对话模型配置及网络。'
+              : '应用未能准备表情角色的参考图。请检查参考图文件及存储空间。',
+        );
+      }
       if (mounted) toast(context, describeError(e));
     } finally {
       elapsed.stop();

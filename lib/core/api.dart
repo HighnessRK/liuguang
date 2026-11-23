@@ -18,6 +18,12 @@ class StudioException implements Exception {
   String toString() => message;
 }
 
+// A local result check can expose a human-readable cause without logging a
+// provider response, input image, or prompt.
+class ResultValidationException extends StudioException {
+  ResultValidationException(super.message);
+}
+
 Uri apiUri(String base, String path) {
   var value = base.trim().replaceAll(RegExp(r'/+$'), '');
   final uri = Uri.tryParse(value);
@@ -251,6 +257,7 @@ class StudioApi {
     CancelToken? cancelToken,
     String operation = '文生图',
     void Function(String)? onStage,
+    Future<void> Function(ImageReply)? onResult,
   }) async {
     final config = store.imageApi.snapshot();
     if (!config.ready) {
@@ -286,8 +293,11 @@ class StudioApi {
     }
     final watch = Stopwatch()..start();
     Map<String, dynamic>? usage;
-    var count = 0;
-    String? failure;
+    var count = 0, receivedCount = 0;
+    String? failure, diagnosticDetail;
+    int? status;
+    var cancelled = false;
+    final validatesGif = options.format == 'gif' && onResult != null;
     try {
       dynamic data;
       final prepared = <Map<String, dynamic>>[];
@@ -481,11 +491,31 @@ class StudioApi {
       final limited = options.count > 0
           ? images.take(options.count).toList()
           : images;
-      count = limited.length;
-      return ImageReply(limited);
+      receivedCount = limited.length;
+      final result = ImageReply(limited);
+      await onResult?.call(result);
+      count = receivedCount;
+      return result;
     } catch (e) {
       failure = describeError(e);
-      throw StudioException(failure);
+      if (e is DioException) {
+        status = e.response?.statusCode;
+        cancelled = e.type == DioExceptionType.cancel;
+      }
+      if (e is ResultValidationException) diagnosticDetail = e.message;
+      if (validatesGif &&
+          diagnosticDetail == null &&
+          status == null &&
+          !cancelled) {
+        diagnosticDetail = receivedCount > 0
+            ? '已收到图片，但应用未能保存表情包。请检查设备存储空间。'
+            : '没有收到可用的 GIF。请检查网络、图片协议和服务商的生成结果。';
+      }
+      throw StudioException(
+        config.key.isEmpty
+            ? failure
+            : failure.replaceAll(config.key, '[已隐藏 Key]'),
+      );
     } finally {
       watch.stop();
       await _record(
@@ -495,6 +525,11 @@ class StudioApi {
         usage,
         count,
         failure,
+        billableImages: receivedCount,
+        diagnosticEvent: validatesGif ? 'sticker_gif_failure' : null,
+        diagnosticDetail: diagnosticDetail,
+        status: status,
+        cancelled: cancelled,
       );
     }
   }
@@ -779,8 +814,14 @@ class StudioApi {
     int milliseconds,
     Map<String, dynamic>? usage,
     int images,
-    String? failure,
-  ) async {
+    String? failure, {
+    int? billableImages,
+    String? diagnosticEvent,
+    String? diagnosticDetail,
+    int? status,
+    bool cancelled = false,
+  }) async {
+    final billed = billableImages ?? images;
     int? tokens(dynamic value) =>
         value is num ? value.toInt() : int.tryParse('$value');
     final input = tokens(usage?['input_tokens'] ?? usage?['prompt_tokens']);
@@ -790,11 +831,11 @@ class StudioApi {
     double? cost;
     if (config.inputPrice > 0 && input != null ||
         config.outputPrice > 0 && output != null ||
-        config.imagePrice > 0 && images > 0) {
+        config.imagePrice > 0 && billed > 0) {
       cost =
           (input ?? 0) * config.inputPrice / 1000000 +
           (output ?? 0) * config.outputPrice / 1000000 +
-          images * config.imagePrice;
+          billed * config.imagePrice;
     }
     await store.addUsage(
       UsageRecord(
@@ -808,6 +849,10 @@ class StudioApi {
         images: images,
         success: failure == null,
         estimatedCost: cost,
+        diagnosticEvent: diagnosticEvent,
+        diagnosticDetail: diagnosticDetail,
+        diagnosticStatus: status,
+        cancelled: cancelled || failure == '请求已取消；服务端可能已经执行，请核对服务端账单',
         error: config.key.isEmpty
             ? failure
             : failure?.replaceAll(config.key, '[已隐藏 Key]'),

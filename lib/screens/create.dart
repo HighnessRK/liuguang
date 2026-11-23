@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart' show compute;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../core/api.dart';
@@ -591,7 +592,8 @@ class _CreateScreenState extends State<CreateScreen> {
           labels: const ['文生图', '图生图', '表情包'],
           selected: mode.clamp(0, 2),
           onChanged: (v) async {
-            if (busy) return;
+            if (busy || v == mode) return;
+            if (widget.store.haptics) HapticFeedback.selectionClick();
             if (v == 2) {
               final saved = await Navigator.push<Artwork>(
                 context,

@@ -417,48 +417,42 @@ class DiagnosticsScreen extends StatefulWidget {
 
 class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
   late Future<String> log = AppLog.read();
-  int kind = 0;
+
   @override
   Widget build(BuildContext context) => SettingsDetail(
     title: '日志详情',
     children: [
-      Text(
-        '记录操作、应用状态与模型请求结果。保留 7 天，不记录 Key、地址、提示词、图片或响应正文。',
-        style: TextStyle(color: muted(context), height: 1.6),
-      ),
-      const SizedBox(height: 16),
-      GlassSegments(
-        labels: const ['正常', '错误'],
-        selected: kind,
-        onChanged: (v) => setState(() => kind = v),
-      ),
-      const SizedBox(height: 14),
+      const SectionLabel('异常记录', caption: '自动保留 7 天'),
       Wrap(
-        spacing: 10,
-        runSpacing: 10,
+        spacing: 8,
+        runSpacing: 8,
         children: [
           GlassButton(
             '刷新',
             icon: Icons.refresh_rounded,
+            small: true,
             onTap: () => setState(() => log = AppLog.read()),
           ),
           GlassButton(
             '导出',
             icon: Icons.ios_share_rounded,
+            small: true,
             onTap: () async {
               final dir = await safeTemporaryDirectory();
               final file = await File('${dir.path}/liuguang-diagnostics.jsonl')
                   .writeAsString(await AppLog.read());
-              await SharePlus.instance.share(
-                ShareParams(files: [XFile(file.path)]),
-              );
+              if (mounted)
+                await SharePlus.instance.share(
+                  ShareParams(files: [XFile(file.path)]),
+                );
             },
           ),
           GlassButton(
             '清空',
-            icon: Icons.delete_outline,
+            icon: Icons.delete_outline_rounded,
+            small: true,
             onTap: () async {
-              if (await confirm(context, '清空日志？', '将删除正常与错误两类日志。')) {
+              if (await confirm(context, '清空日志？', '将删除本机保存的异常记录。')) {
                 await AppLog.clear();
                 if (mounted) setState(() => log = AppLog.read());
               }
@@ -478,84 +472,157 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
               .reversed
               .map(AppLog.parse)
               .whereType<Map<String, dynamic>>()
-              .where((entry) {
-                final event = entry['event']?.toString() ?? '';
-                final error =
-                    entry['level'] == 'error' ||
-                    event.contains('failure') ||
-                    event.endsWith('_error');
-                return error == (kind == 1);
-              })
               .toList();
-          if (entries.isEmpty) return Text(kind == 0 ? '暂无正常日志' : '暂无错误日志');
-          return SizedBox(
-            height: (MediaQuery.sizeOf(context).height * .58).clamp(200, 580),
-            child: ListView.separated(
-              primary: false,
-              itemCount: entries.length,
-              separatorBuilder: (_, _) => const SizedBox(height: 8),
-              itemBuilder: (context, i) {
-                final entry = entries[i];
-                final date = (entry['time']?.toString() ?? '')
-                    .replaceFirst('T', ' ')
-                    .split('.')
-                    .first;
-                final details = [
-                  date,
-                  if (entry['status'] != null) 'HTTP ${entry['status']}',
-                  if (entry['elapsedMs'] != null) '${entry['elapsedMs']} ms',
-                  if (entry['images'] != null) '${entry['images']} 张',
-                  if (entry['inputTokens'] != null ||
-                      entry['outputTokens'] != null)
-                    'Token ${entry['inputTokens'] ?? '—'}/${entry['outputTokens'] ?? '—'}',
-                ];
-                return Glass(
-                  blur: false,
-                  radius: 17,
-                  padding: const EdgeInsets.all(13),
-                  child: Row(
-                    children: [
-                      Icon(
-                        kind == 1
-                            ? Icons.error_outline
-                            : Icons.check_circle_outline,
-                        color: kind == 1
-                            ? Theme.of(context).colorScheme.error
-                            : accentInk(context),
-                        size: 19,
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              entry['event']?.toString() ?? '',
-                              style: TextStyle(
-                                color: ink(context),
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              details.join(' · '),
-                              style: TextStyle(
-                                color: muted(context),
-                                fontSize: 12,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              },
-            ),
+          if (entries.isEmpty) {
+            return const EmptyState(
+              icon: Icons.verified_outlined,
+              title: '暂无异常记录',
+              subtitle: '出现异常时，可在这里查看原因。',
+            );
+          }
+          return Column(
+            children: [
+              for (final entry in entries)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: _DiagnosticEntry(entry: entry),
+                ),
+            ],
           );
         },
       ),
     ],
+  );
+}
+
+class _DiagnosticEntry extends StatelessWidget {
+  const _DiagnosticEntry({required this.entry});
+
+  final Map<String, dynamic> entry;
+
+  String get _event => entry['event']?.toString() ?? '';
+  String get _time =>
+      (entry['time']?.toString() ?? '').replaceFirst('T', ' ').split('.').first;
+  String get _title => switch (_event) {
+    'sticker_gif_failure' => 'GIF 表情包生成失败',
+    'model_request_failure' => '模型调用未完成',
+    'flutter_framework_error' || 'unhandled_app_error' => '应用运行异常',
+    'shared_view_error' => '系统图片转场未能启动',
+    'update_check_failure' => '检查更新失败',
+    'update_install_or_download_failure' => '下载或安装更新失败',
+    _ when _event.startsWith('model_image_poll_') => '查询生图进度失败',
+    _ when _event.startsWith('model_image_') => '生图接口异常',
+    _ when _event.startsWith('model_chat_') => '对话接口异常',
+    _ when _event.startsWith('model_') => '模型接口异常',
+    _ when _event.startsWith('update_') => '应用更新异常',
+    _ => '应用操作异常',
+  };
+
+  String get _cause {
+    final detail = entry['detail'];
+    if (_event == 'sticker_gif_failure' &&
+        detail is String &&
+        detail.isNotEmpty)
+      return detail;
+    return switch (entry['status']) {
+      400 => '服务端拒绝了请求参数。请检查所选模型、图片协议与生成规格。',
+      401 || 403 => '服务端拒绝授权。请检查 API Key、模型权限或账户状态。',
+      404 => '服务端找不到对应接口或任务。请检查基础地址和模型配置。',
+      413 => '上传文件超过服务端大小限制。请选择较小的参考图。',
+      429 => '请求超过服务端限额。请检查频率限制或账户余额。',
+      final int value when value >= 500 => '服务端暂时无法处理请求，请稍后再试。',
+      _ when _event.contains('timeout') => '等候接口回复超时。请检查网络和服务端的任务状态。',
+      _ when _event.contains('connection') => '请检查网络和接口基础地址。',
+      _ when _event == 'shared_view_error' => '系统未能打开转场，应用将尝试在内置预览中打开图片。',
+      _ when _event.startsWith('update_') => '请检查网络、下载源或设备剩余空间。',
+      _ when _event.startsWith('model_') => '模型请求未完成。请同时查看「使用明细 → 请求明细」中的同一时段。',
+      _ => '应用遇到异常。若问题再次出现，可导出这条日志协助排查。',
+    };
+  }
+
+  @override
+  Widget build(BuildContext context) => Glass(
+    blur: false,
+    radius: 19,
+    padding: EdgeInsets.zero,
+    child: ListTile(
+      leading: Icon(
+        Icons.error_outline_rounded,
+        color: Theme.of(context).colorScheme.error,
+      ),
+      title: Text(
+        _title,
+        style: TextStyle(color: ink(context), fontWeight: FontWeight.w600),
+      ),
+      subtitle: Text(_time, style: TextStyle(color: muted(context))),
+      trailing: const Icon(Icons.chevron_right_rounded),
+      onTap: () => Navigator.of(context).push<void>(
+        MaterialPageRoute(
+          builder: (context) => SettingsDetail(
+            title: _title,
+            children: [
+              Glass(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '发生了什么',
+                      style: TextStyle(
+                        color: ink(context),
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      _cause,
+                      style: TextStyle(height: 1.55, color: ink(context)),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              Glass(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _metadata(context, '发生时间', _time),
+                    if (entry['status'] != null)
+                      _metadata(context, '服务端状态', 'HTTP ${entry['status']}'),
+                    if (entry['elapsedMs'] case final num duration)
+                      _metadata(
+                        context,
+                        '耗时',
+                        '${(duration / 1000).toStringAsFixed(1)} 秒',
+                      ),
+                    if (entry['inputTokens'] != null ||
+                        entry['outputTokens'] != null)
+                      _metadata(
+                        context,
+                        'Token 用量',
+                        '输入 ${entry['inputTokens'] ?? '—'} · 输出 ${entry['outputTokens'] ?? '—'}',
+                      ),
+                    _metadata(context, '诊断代码', _event),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+
+  Widget _metadata(BuildContext context, String label, String value) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 5),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: TextStyle(color: muted(context), fontSize: 12)),
+        const SizedBox(height: 2),
+        Text(value, style: TextStyle(color: ink(context))),
+      ],
+    ),
   );
 }
 

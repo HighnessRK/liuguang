@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -135,7 +136,7 @@ class _LibraryScreenState extends State<LibraryScreen>
   final selected = <String>{};
   final pull = ValueNotifier<double>(0);
   bool pullingFromTop = false;
-  static const pullDistance = 110.0;
+  static const pullDistance = 185.0;
   int filter = 0;
   bool hiddenSpace = false;
   String query = '';
@@ -175,6 +176,24 @@ class _LibraryScreenState extends State<LibraryScreen>
       search.clear();
       filter = 0;
     });
+  }
+
+  @override
+  void didUpdateWidget(covariant LibraryScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.active && !widget.active) {
+      pullingFromTop = false;
+      overscroll = 0;
+      pull.value = 0;
+      if (hiddenSpace) {
+        hiddenSpace = false;
+        query = '';
+        filter = 0;
+        selected.clear();
+        selectionAnimation.value = 0;
+        search.clear();
+      }
+    }
   }
 
   @override
@@ -294,13 +313,15 @@ class _LibraryScreenState extends State<LibraryScreen>
                           GlassSegments(
                             labels: const ['全部作品', '收藏', 'GIF'],
                             selected: filter,
-                            onChanged: (i) => setState(() => filter = i),
+                            onChanged: (i) {
+                              if (i == filter) return;
+                              if (widget.store.haptics) {
+                                HapticFeedback.selectionClick();
+                              }
+                              setState(() => filter = i);
+                            },
                           ),
-                          SectionLabel(
-                            selected.isEmpty
-                                ? '${items.length} 件作品'
-                                : '已选 ${selected.length} 件',
-                          ),
+                          SectionLabel('${items.length} 件作品'),
                         ],
                       ),
                     ),
@@ -387,19 +408,9 @@ class _LibraryScreenState extends State<LibraryScreen>
                                     child: Stack(
                                       fit: StackFit.expand,
                                       children: [
-                                        Hero(
-                                          tag: 'artwork_${art.id}',
-                                          child: Image.file(
-                                            File(art.path),
-                                            fit: BoxFit.cover,
-                                            cacheWidth: 600,
-                                            errorBuilder: (_, _, _) =>
-                                                const Center(
-                                                  child: Icon(
-                                                    Icons.broken_image_outlined,
-                                                  ),
-                                                ),
-                                          ),
+                                        _ArtworkHero(
+                                          art: art,
+                                          fit: BoxFit.cover,
                                         ),
                                         if (selected.contains(art.id))
                                           Positioned(
@@ -574,101 +585,115 @@ class _LibraryScreenState extends State<LibraryScreen>
               offstage: selectionAnimation.isDismissed,
               child: IgnorePointer(ignoring: selected.isEmpty, child: child),
             ),
-            child: SizeTransition(
+            child: FadeTransition(
               key: const ValueKey('artwork-selection-toolbar'),
-              sizeFactor: selectionCurve,
-              alignment: Alignment.topCenter,
-              child: FadeTransition(
-                opacity: selectionCurve,
-                child: Glass(
-                  blur: false,
-                  tint: Theme.of(context).colorScheme.surface,
-                  opacity: .96,
-                  padding: const EdgeInsets.all(10),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        '已选 ${selected.length} 件',
-                        style: TextStyle(
-                          color: ink(context),
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Wrap(
-                        alignment: WrapAlignment.center,
-                        spacing: 8,
-                        runSpacing: 10,
+              opacity: selectionCurve,
+              child: SlideTransition(
+                position: Tween(
+                  begin: const Offset(0, .25),
+                  end: Offset.zero,
+                ).animate(selectionCurve),
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 440),
+                    child: Glass(
+                      radius: 26,
+                      tint: Theme.of(context).colorScheme.surface,
+                      opacity: isDark(context) ? .88 : .92,
+                      padding: const EdgeInsets.fromLTRB(10, 4, 10, 8),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
                         children: [
-                          GlassButton(
-                            '分享图',
-                            small: true,
-                            onTap: () => shareArtworkCards(
-                              context,
-                              widget.store,
-                              widget.store.artworks
-                                  .where((a) => selected.contains(a.id))
-                                  .toList(),
+                          Padding(
+                            padding: const EdgeInsets.only(left: 10),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.check_circle_outline_rounded,
+                                  size: 17,
+                                  color: accentInk(context),
+                                ),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(
+                                    '已选 ${selected.length} 件',
+                                    style: TextStyle(
+                                      color: ink(context),
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                                IconButton(
+                                  tooltip: '取消',
+                                  color: muted(context),
+                                  iconSize: 20,
+                                  onPressed: () =>
+                                      updateSelection(selected.clear),
+                                  icon: const Icon(Icons.close_rounded),
+                                ),
+                              ],
                             ),
-                          ),
-                          GlassButton(
-                            '全选',
-                            small: true,
-                            onTap: () => updateSelection(
-                              () => selected.addAll(items.map((a) => a.id)),
-                            ),
-                          ),
-                          GlassButton(
-                            '取消',
-                            small: true,
-                            onTap: () =>
-                                updateSelection(() => selected.clear()),
                           ),
                           Row(
-                            mainAxisSize: MainAxisSize.min,
                             children: [
-                              GlassButton(
-                                '删除所选',
-                                small: true,
-                                onTap: () async {
+                              _SelectionAction(
+                                '分享图',
+                                Icons.ios_share_rounded,
+                                () => shareArtworkCards(
+                                  context,
+                                  widget.store,
+                                  widget.store.artworks
+                                      .where((a) => selected.contains(a.id))
+                                      .toList(),
+                                ),
+                              ),
+                              _SelectionAction(
+                                '全选',
+                                Icons.select_all_rounded,
+                                () => updateSelection(
+                                  () => selected.addAll(items.map((a) => a.id)),
+                                ),
+                              ),
+                              _SelectionAction(
+                                '删除',
+                                Icons.delete_outline_rounded,
+                                () async {
+                                  final batch = widget.store.artworks
+                                      .where((a) => selected.contains(a.id))
+                                      .toList();
                                   if (!await confirm(
                                     context,
-                                    '删除 ${selected.length} 件作品？',
+                                    '删除 ${batch.length} 件作品？',
                                     '仅删除应用内副本，相册照片保留。',
-                                  )) {
+                                  ))
                                     return;
-                                  }
-                                  for (final art
-                                      in widget.store.artworks
-                                          .where((a) => selected.contains(a.id))
-                                          .toList()) {
+                                  for (final art in batch) {
                                     await widget.store.removeArtwork(art);
                                   }
-                                  if (mounted) {
-                                    updateSelection(() => selected.clear());
-                                  }
+                                  if (mounted) updateSelection(selected.clear);
                                 },
+                                destructive: true,
                               ),
-                              const SizedBox(width: 8),
-                              GlassButton(
-                                hiddenSpace ? '还原到普通空间' : '移入隐藏空间',
-                                small: true,
-                                onTap: () async {
+                              _SelectionAction(
+                                hiddenSpace ? '还原' : '隐藏',
+                                hiddenSpace
+                                    ? Icons.visibility_outlined
+                                    : Icons.visibility_off_outlined,
+                                () async {
                                   await widget.store.setArtworkHidden(
                                     selected,
                                     !hiddenSpace,
                                   );
-                                  if (mounted) {
-                                    updateSelection(() => selected.clear());
-                                  }
+                                  if (mounted) updateSelection(selected.clear);
                                 },
+                                tooltip: hiddenSpace ? '还原到普通空间' : '移入隐藏空间',
                               ),
                             ],
                           ),
                         ],
                       ),
-                    ],
+                    ),
                   ),
                 ),
               ),
@@ -676,6 +701,140 @@ class _LibraryScreenState extends State<LibraryScreen>
           ),
         ),
       ],
+    );
+  }
+}
+
+class _SelectionAction extends StatelessWidget {
+  const _SelectionAction(
+    this.label,
+    this.icon,
+    this.onTap, {
+    this.tooltip,
+    this.destructive = false,
+  });
+
+  final String label;
+  final IconData icon;
+  final VoidCallback onTap;
+  final String? tooltip;
+  final bool destructive;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = destructive
+        ? Theme.of(context).colorScheme.error
+        : ink(context);
+    return Expanded(
+      child: Tooltip(
+        message: tooltip ?? label,
+        child: TextButton(
+          onPressed: onTap,
+          style: TextButton.styleFrom(
+            foregroundColor: color,
+            padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 7),
+            minimumSize: const Size(0, 52),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 21),
+              const SizedBox(height: 5),
+              Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+ImageProvider _artworkImage(Artwork art, int maxEdge) {
+  final original = FileImage(File(art.path));
+  if (math.max(art.width, art.height) <= maxEdge) return original;
+  return ResizeImage(
+    original,
+    width: art.width >= art.height ? maxEdge : null,
+    height: art.height > art.width ? maxEdge : null,
+    allowUpscaling: false,
+  );
+}
+
+class _ArtworkHero extends StatelessWidget {
+  const _ArtworkHero({
+    required this.art,
+    required this.fit,
+    this.detail = false,
+  });
+
+  final Artwork art;
+  final BoxFit fit;
+  final bool detail;
+
+  Widget image(ImageProvider provider, BoxFit fit, {Widget? fallback}) => Image(
+    image: provider,
+    fit: fit,
+    gaplessPlayback: true,
+    frameBuilder: fallback == null
+        ? null
+        : (context, child, frame, _) => frame == null ? fallback : child,
+    errorBuilder: (_, _, _) =>
+        fallback ?? const Center(child: Icon(Icons.broken_image_outlined)),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final thumbnail = _artworkImage(art, 640);
+    final base = image(thumbnail, fit);
+    return Hero(
+      tag: 'artwork_${art.id}',
+      flightShuttleBuilder: (context, animation, direction, from, to) =>
+          image(thumbnail, BoxFit.cover),
+      child: detail
+          ? _ArtworkDetailImage(
+              art: art,
+              lowResolution: base,
+              highResolution: () =>
+                  image(_artworkImage(art, 1600), fit, fallback: base),
+            )
+          : base,
+    );
+  }
+}
+
+class _ArtworkDetailImage extends StatelessWidget {
+  const _ArtworkDetailImage({
+    required this.art,
+    required this.lowResolution,
+    required this.highResolution,
+  });
+
+  final Artwork art;
+  final Widget lowResolution;
+  final Widget Function() highResolution;
+
+  @override
+  Widget build(BuildContext context) {
+    final animation = ModalRoute.of(context)?.animation;
+    if (animation == null ||
+        math.max(art.width, art.height) <= 640 ||
+        art.path.toLowerCase().endsWith('.gif'))
+      return lowResolution;
+    return ListenableBuilder(
+      listenable: animation,
+      child: lowResolution,
+      builder: (context, child) =>
+          animation.isCompleted ? highResolution() : child!,
     );
   }
 }
@@ -837,9 +996,27 @@ class _ArtworkDetailState extends State<ArtworkDetail> {
                   child: InteractiveViewer(
                     minScale: .5,
                     maxScale: 6,
-                    child: Hero(
-                      tag: 'artwork_${art.id}',
-                      child: Image.file(File(art.path), fit: BoxFit.contain),
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        final size = applyBoxFit(
+                          BoxFit.contain,
+                          Size(
+                            math.max(1, art.width).toDouble(),
+                            math.max(1, art.height).toDouble(),
+                          ),
+                          constraints.biggest,
+                        ).destination;
+                        return Center(
+                          child: SizedBox.fromSize(
+                            size: size,
+                            child: _ArtworkHero(
+                              art: art,
+                              fit: BoxFit.contain,
+                              detail: true,
+                            ),
+                          ),
+                        );
+                      },
                     ),
                   ),
                 ),

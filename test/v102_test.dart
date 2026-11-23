@@ -35,6 +35,7 @@ class OfflineImageApi extends StudioApi {
     CancelToken? cancelToken,
     String operation = '文生图',
     void Function(String)? onStage,
+    Future<void> Function(ImageReply)? onResult,
   }) async {
     calls++;
     receivedPrompt = prompt;

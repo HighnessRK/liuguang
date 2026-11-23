@@ -44,6 +44,7 @@ class ControlledImageApi extends StudioApi {
     CancelToken? cancelToken,
     String operation = '文生图',
     void Function(String)? onStage,
+    Future<void> Function(ImageReply)? onResult,
   }) async {
     calls++;
     onStage?.call('模型正在处理，请稍候');
@@ -78,6 +79,7 @@ class MotionFixtureApi extends StudioApi {
     CancelToken? cancelToken,
     String operation = '文生图',
     void Function(String)? onStage,
+    Future<void> Function(ImageReply)? onResult,
   }) async {
     generationCalls++;
     receivedPrompt = prompt;
@@ -119,10 +121,15 @@ class StickerFixtureApi extends StudioApi {
     CancelToken? cancelToken,
     String operation = '文生图',
     void Function(String)? onStage,
+    Future<void> Function(ImageReply)? onResult,
   }) async {
     this.options = options;
     this.prompt = prompt;
-    return ImageReply([image.encodePng(image.Image(width: 64, height: 64))]);
+    final reply = ImageReply([
+      image.encodePng(image.Image(width: 64, height: 64)),
+    ]);
+    await onResult?.call(reply);
+    return reply;
   }
 }
 
@@ -359,7 +366,7 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 60));
       final toolbar = find.byKey(const ValueKey('artwork-selection-toolbar'));
-      final progress = tester.widget<SizeTransition>(toolbar).sizeFactor.value;
+      final progress = tester.widget<FadeTransition>(toolbar).opacity.value;
       expect(progress, greaterThan(0));
       expect(progress, lessThan(1));
       expect(haptics, contains('HapticFeedbackType.mediumImpact'));
@@ -378,11 +385,11 @@ void main() {
         findsOneWidget,
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.text('取消'));
+      await tester.tap(find.byTooltip('取消'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 60));
       expect(
-        tester.widget<SizeTransition>(toolbar).sizeFactor.value,
+        tester.widget<FadeTransition>(toolbar).opacity.value,
         inExclusiveRange(0, 1),
       );
       await tester.pumpAndSettle();
@@ -396,7 +403,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.longPress(find.text('选择检查'));
       await tester.pump();
-      expect(tester.widget<SizeTransition>(toolbar).sizeFactor.value, 1);
+      expect(tester.widget<FadeTransition>(toolbar).opacity.value, 1);
       expect(haptics, isEmpty);
       await tester.pumpWidget(const SizedBox.shrink());
       expect(tester.takeException(), isNull);
@@ -1384,9 +1391,9 @@ void main() {
         expect(find.byType(BottomSheet), findsNothing);
         expect(find.text('分享图'), findsOneWidget);
         expect(find.text('全选'), findsOneWidget);
-        expect(find.text('删除所选'), findsOneWidget);
+        expect(find.text('删除'), findsOneWidget);
         expect(find.text('已选 1 件'), findsOneWidget);
-        await tester.tap(find.text('取消'));
+        await tester.tap(find.byTooltip('取消'));
         await tester.pumpAndSettle();
       }
       await tester.ensureVisible(find.text('本地菜单样例'));

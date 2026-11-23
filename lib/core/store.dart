@@ -210,13 +210,16 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<void> addUsage(UsageRecord record) async {
-    await AppLog.record(
-      record.success ? 'model_request_success' : 'model_request_failure',
-      elapsedMs: record.milliseconds,
-      images: record.images,
-      inputTokens: record.inputTokens,
-      outputTokens: record.outputTokens,
-    );
+    if (!record.success && !record.cancelled) {
+      await AppLog.record(
+        record.diagnosticEvent ?? 'model_request_failure',
+        status: record.diagnosticStatus,
+        detail: record.diagnosticDetail,
+        elapsedMs: record.milliseconds,
+        inputTokens: record.inputTokens,
+        outputTokens: record.outputTokens,
+      );
+    }
     usage.insert(0, record);
     await saveCatalog();
   }
