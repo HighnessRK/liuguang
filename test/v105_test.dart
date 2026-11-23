@@ -7,8 +7,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:liuguang/core/api.dart';
 import 'package:liuguang/core/models.dart';
 import 'package:liuguang/core/store.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class _Store extends AppStore {
+  _Store() : super(readGifAvailability: (_) async => true);
   @override
   Future<void> addUsage(UsageRecord record) async {
     usage.add(record);
@@ -89,6 +91,9 @@ void main() {
         model: 'gpt-image-2',
         protocol: ApiProtocol.gptImage,
       );
+    SharedPreferences.setMockInitialValues({});
+    store.prefs = await SharedPreferences.getInstance();
+    await store.refreshGifAvailability();
     await expectLater(
       StudioApi(store).generate(
         prompt: '动图',
@@ -137,6 +142,9 @@ void main() {
         model: 'gpt-image-2.6-sunburst',
         protocol: ApiProtocol.gptImage,
       );
+    SharedPreferences.setMockInitialValues({});
+    store.prefs = await SharedPreferences.getInstance();
+    await store.refreshGifAvailability();
     try {
       final reply = await StudioApi(store).generate(
         prompt: '轻轻动起来',

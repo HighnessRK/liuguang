@@ -88,7 +88,8 @@ void main() {
         'update_auto': false,
         'draft': '验证',
       });
-      final store = AppStore()
+      var allowGif = false;
+      final store = AppStore(readGifAvailability: (_) async => allowGif)
         ..directory = dir
         ..prefs = await SharedPreferences.getInstance();
       final fixture = _FixtureService();
@@ -177,6 +178,14 @@ void main() {
         await _tap(tester, find.text('创作').last);
         await _tap(tester, find.text('表情包'));
         final animatedMode = find.text('动图 · 512 GIF');
+        await tester.ensureVisible(animatedMode);
+        await tester.pumpAndSettle();
+        await tester.tap(animatedMode);
+        await tester.pump(const Duration(milliseconds: 240));
+        expect(find.text('GIF 生成测试中，暂不支持使用'), findsOneWidget);
+        expect(fixture.imageCalls, 0);
+        allowGif = true;
+        await store.refreshGifAvailability();
         await _tap(tester, animatedMode);
         await tester.enterText(find.byType(TextField).last, '真机验证文本');
         FocusManager.instance.primaryFocus?.unfocus();

@@ -233,7 +233,7 @@ class GlassButton extends StatelessWidget {
   final String label;
   final IconData? icon;
   final VoidCallback? onTap;
-  final bool primary, small, busy;
+  final bool primary, small, busy, unavailable;
   const GlassButton(
     this.label, {
     super.key,
@@ -242,13 +242,16 @@ class GlassButton extends StatelessWidget {
     this.primary = false,
     this.small = false,
     this.busy = false,
+    this.unavailable = false,
   });
   @override
   Widget build(BuildContext context) {
     final c = mx.MiuixTheme.of(context).colors;
     final store = StudioScope.of(context);
     final popup = ModalRoute.of(context) is PopupRoute;
-    final foreground = primary
+    final foreground = unavailable
+        ? muted(context)
+        : primary
         ? primaryOn(
             context,
             opacity: popup
@@ -272,13 +275,13 @@ class GlassButton extends StatelessWidget {
         child: Glass(
           separateLayer: ModalRoute.of(context) is! PopupRoute,
           radius: 16,
-          tint: primary ? accent(context) : null,
+          tint: primary && !unavailable ? accent(context) : null,
           padding: EdgeInsets.symmetric(
             horizontal: small ? 14 : 20,
             vertical: small ? 8 : 12,
           ),
           child: _PressMotion(
-            enabled: onTap != null && !busy,
+            enabled: onTap != null && !busy && !unavailable,
             child: Row(
               mainAxisSize: MainAxisSize.min,
               mainAxisAlignment: MainAxisAlignment.center,
@@ -333,11 +336,13 @@ class GlassIcon extends StatelessWidget {
   final IconData icon;
   final String tooltip;
   final VoidCallback? onTap;
+  final bool unavailable;
   const GlassIcon(
     this.icon, {
     super.key,
     required this.tooltip,
     required this.onTap,
+    this.unavailable = false,
   });
   @override
   Widget build(BuildContext context) => Tooltip(
@@ -356,8 +361,12 @@ class GlassIcon extends StatelessWidget {
           child: SizedBox.square(
             dimension: 44,
             child: _PressMotion(
-              enabled: onTap != null,
-              child: Icon(icon, size: 22, color: ink(context)),
+              enabled: onTap != null && !unavailable,
+              child: Icon(
+                icon,
+                size: 22,
+                color: unavailable ? muted(context) : ink(context),
+              ),
             ),
           ),
         ),
@@ -482,11 +491,13 @@ class GlassSegments extends StatelessWidget {
   final List<String> labels;
   final int selected;
   final ValueChanged<int> onChanged;
+  final Set<int> unavailable;
   const GlassSegments({
     super.key,
     required this.labels,
     required this.selected,
     required this.onChanged,
+    this.unavailable = const {},
   });
   @override
   Widget build(BuildContext context) {
@@ -502,7 +513,9 @@ class GlassSegments extends StatelessWidget {
               final width = bounds.maxWidth / labels.length;
               return Stack(
                 children: [
-                  if (selected >= 0 && selected < labels.length)
+                  if (selected >= 0 &&
+                      selected < labels.length &&
+                      !unavailable.contains(selected))
                     Positioned(
                       top: 0,
                       bottom: 0,
@@ -550,7 +563,10 @@ class GlassSegments extends StatelessWidget {
                                       style: TextStyle(
                                         fontSize: 14,
                                         fontWeight: FontWeight.w600,
-                                        color: selected == index
+                                        color: unavailable.contains(index)
+                                            ? muted(context)
+                                                  .withValues(alpha: .67)
+                                            : selected == index
                                             ? accentInk(context)
                                             : muted(context),
                                       ),

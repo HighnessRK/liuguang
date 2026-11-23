@@ -11,6 +11,7 @@ import 'package:image_picker/image_picker.dart';
 import '../core/api.dart';
 import '../core/imaging.dart';
 import '../core/image_transport.dart';
+import '../core/gif_availability.dart';
 import '../core/models.dart';
 import '../core/materials.dart';
 import '../core/store.dart';
@@ -387,6 +388,10 @@ class _CreateScreenState extends State<CreateScreen> {
 
   Future<void> generate() async {
     if (busy || polishing) return;
+    if (options.format == 'gif' && !widget.store.gifEnabled) {
+      toast(context, gifUnavailableMessage);
+      return;
+    }
     if (professional && professionalKey.currentState?.error != null) {
       toast(context, professionalKey.currentState!.error!);
       return;
@@ -909,6 +914,9 @@ class _CreateScreenState extends State<CreateScreen> {
             child: GlassButton(
               '开始创作',
               primary: true,
+              unavailable:
+                  options.format == 'gif' &&
+                  !StudioScope.of(context).gifEnabled,
               icon: Icons.auto_awesome_rounded,
               onTap: generate,
             ),
@@ -1183,7 +1191,12 @@ class _GenerationSettingsState extends State<GenerationSettings> {
       GlassSegments(
         labels: const ['PNG', 'JPEG', 'WebP', 'GIF'],
         selected: ['png', 'jpeg', 'webp', 'gif'].indexOf(o.format).clamp(0, 3),
+        unavailable: StudioScope.of(context).gifEnabled ? const {} : const {3},
         onChanged: (i) {
+          if (i == 3 && !StudioScope.of(context).gifEnabled) {
+            toast(context, gifUnavailableMessage);
+            return;
+          }
           if (i == 3 &&
               !supportsNativeGif(StudioScope.of(context).imageApi.model)) {
             toast(context, '当前模型暂不支持 GIF');

@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart' show compute;
 
 import 'image_transport.dart';
 
+import 'gif_availability.dart';
 import 'models.dart';
 import 'store.dart';
 import 'updates.dart';
@@ -283,6 +284,9 @@ class StudioApi {
     }
     if (config.protocol == ApiProtocol.chatImage && mask != null) {
       throw StudioException('对话生图接口没有标准蒙版协议，请为局部修图选择 Images 协议');
+    }
+    if (options.format == 'gif' && !store.gifEnabled) {
+      throw StudioException(gifUnavailableMessage);
     }
     if (options.format == 'gif' && !supportsNativeGif(config.model)) {
       throw StudioException('当前模型暂不支持 GIF');

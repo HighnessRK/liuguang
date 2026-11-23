@@ -12,6 +12,7 @@ import 'package:liquid_glass_renderer/liquid_glass_renderer.dart' as lgr;
 
 import '../core/api.dart';
 import '../core/imaging.dart';
+import '../core/gif_availability.dart';
 import '../core/models.dart';
 import '../core/store.dart';
 import '../ui/glass.dart';
@@ -2064,7 +2065,14 @@ class _ExportSheetState extends State<ExportSheet> {
       GlassSegments(
         labels: const ['PNG', 'JPEG', 'WebP', 'GIF'],
         selected: format,
-        onChanged: (v) => setState(() => format = v),
+        unavailable: StudioScope.of(context).gifEnabled ? const {} : const {3},
+        onChanged: (v) {
+          if (v == 3 && !StudioScope.of(context).gifEnabled) {
+            toast(context, gifUnavailableMessage);
+            return;
+          }
+          setState(() => format = v);
+        },
       ),
       if (format == 1 || format == 2) ...[
         const SizedBox(height: 25),
@@ -2099,11 +2107,18 @@ class _ExportSheetState extends State<ExportSheet> {
         '保存作品',
         primary: true,
         icon: Icons.download_rounded,
-        onTap: () => Navigator.pop(context, {
-          'format': ['png', 'jpeg', 'webp', 'gif'][format],
-          'quality': quality,
-          'gallery': gallery,
-        }),
+        unavailable: format == 3 && !StudioScope.of(context).gifEnabled,
+        onTap: () {
+          if (format == 3 && !StudioScope.of(context).gifEnabled) {
+            toast(context, gifUnavailableMessage);
+            return;
+          }
+          Navigator.pop(context, {
+            'format': ['png', 'jpeg', 'webp', 'gif'][format],
+            'quality': quality,
+            'gallery': gallery,
+          });
+        },
       ),
     ],
   );

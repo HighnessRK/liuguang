@@ -9,6 +9,7 @@ import 'package:share_plus/share_plus.dart';
 
 import '../core/api.dart';
 import '../core/imaging.dart';
+import '../core/gif_availability.dart';
 import '../core/models.dart';
 import '../core/store.dart';
 import '../core/updates.dart';
@@ -289,7 +290,13 @@ class _LibraryScreenState extends State<LibraryScreen>
                                 : GlassIcon(
                                     Icons.gif_box_outlined,
                                     tooltip: '原生 GIF 创作',
+                                    unavailable: !StudioScope.of(context)
+                                        .gifEnabled,
                                     onTap: () {
+                                      if (!widget.store.gifEnabled) {
+                                        toast(context, gifUnavailableMessage);
+                                        return;
+                                      }
                                       if (!supportsNativeGif(
                                         widget.store.imageApi.model,
                                       )) {
@@ -1232,6 +1239,10 @@ class _GifComposerState extends State<GifComposer> {
   }
 
   Future<void> compose() async {
+    if (!widget.store.gifEnabled) {
+      toast(context, gifUnavailableMessage);
+      return;
+    }
     if (frames.length < 2 || busy) {
       return;
     }
@@ -1396,7 +1407,10 @@ class _GifComposerState extends State<GifComposer> {
               primary: true,
               busy: busy,
               icon: Icons.gif_rounded,
-              onTap: frames.length < 2 ? null : compose,
+              unavailable: !StudioScope.of(context).gifEnabled,
+              onTap: !widget.store.gifEnabled || frames.length >= 2
+                  ? compose
+                  : null,
             ),
             const SizedBox(height: 25),
           ],

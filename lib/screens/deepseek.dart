@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 
 import '../core/api.dart';
 import '../core/imaging.dart';
+import '../core/gif_availability.dart';
 import '../core/models.dart';
 import '../core/store.dart';
 import '../core/updates.dart';
@@ -165,6 +166,10 @@ class _DeepSeekStickerScreenState extends State<DeepSeekStickerScreen> {
 
   Future<void> generate() async {
     if (busy) return;
+    if (animated && !widget.store.gifEnabled) {
+      toast(context, gifUnavailableMessage);
+      return;
+    }
     final caption = text.text.trim();
     if (caption.isEmpty) {
       toast(context, '请先填写表情文本');
@@ -269,6 +274,7 @@ class _DeepSeekStickerScreenState extends State<DeepSeekStickerScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final gifEnabled = StudioScope.of(context).gifEnabled;
     final images = profile.id == _fish.id
         ? <ImageProvider>[const AssetImage(_fishAsset)]
         : profile.references.map((path) => FileImage(File(path))).toList();
@@ -333,8 +339,14 @@ class _DeepSeekStickerScreenState extends State<DeepSeekStickerScreen> {
               GlassSegments(
                 labels: const ['静态 · 4K JPEG', '动图 · 512 GIF'],
                 selected: animated ? 1 : 0,
+                unavailable: gifEnabled ? const {} : const {1},
                 onChanged: (i) {
-                  if (!busy) setState(() => animated = i == 1);
+                  if (busy) return;
+                  if (i == 1 && !widget.store.gifEnabled) {
+                    toast(context, gifUnavailableMessage);
+                    return;
+                  }
+                  setState(() => animated = i == 1);
                 },
               ),
               if (animated) ...[
@@ -358,6 +370,7 @@ class _DeepSeekStickerScreenState extends State<DeepSeekStickerScreen> {
                 GlassButton(
                   '生成表情包',
                   primary: true,
+                  unavailable: animated && !gifEnabled,
                   icon: Icons.auto_awesome_rounded,
                   onTap: generate,
                 ),

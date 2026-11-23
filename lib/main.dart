@@ -63,14 +63,20 @@ Future<void> main() async {
     unawaited(AppLog.record('unhandled_app_error'));
     return false;
   };
-  runApp(LiuguangApp(store: store));
+  runApp(LiuguangApp(store: store, refreshGifAvailability: true));
 }
 
 class LiuguangApp extends StatelessWidget {
   final AppStore store;
   final StudioApi? api;
   static final _routeLog = _StudioRouteLog();
-  const LiuguangApp({super.key, required this.store, this.api});
+  final bool refreshGifAvailability;
+  const LiuguangApp({
+    super.key,
+    required this.store,
+    this.api,
+    this.refreshGifAvailability = false,
+  });
   @override
   Widget build(BuildContext context) => StudioScope(
     store: store,
@@ -120,7 +126,11 @@ class LiuguangApp extends StatelessWidget {
             ),
           ),
         ),
-        home: StudioHome(store: store, api: api),
+        home: StudioHome(
+          store: store,
+          api: api,
+          refreshGifAvailability: refreshGifAvailability,
+        ),
       ),
     ),
   );
@@ -205,13 +215,29 @@ class _StudioRouteLog extends NavigatorObserver {
 class StudioHome extends StatefulWidget {
   final AppStore store;
   final StudioApi? api;
-  const StudioHome({super.key, required this.store, this.api});
+  final bool refreshGifAvailability;
+  const StudioHome({
+    super.key,
+    required this.store,
+    this.api,
+    this.refreshGifAvailability = false,
+  });
   @override
   State<StudioHome> createState() => _StudioHomeState();
 }
 
 class _StudioHomeState extends State<StudioHome> with WidgetsBindingObserver {
   bool checkingUpdates = false;
+  Timer? gifAvailabilityPoll;
+
+  void refreshGifStatus() {
+    if (!widget.refreshGifAvailability) return;
+    unawaited(widget.store.refreshGifAvailability());
+    gifAvailabilityPoll ??= Timer.periodic(const Duration(minutes: 1), (_) {
+      unawaited(widget.store.refreshGifAvailability());
+    });
+  }
+
   Future<void> checkUpdates() async {
     if (!mounted || checkingUpdates || AppLog.file == null) return;
     checkingUpdates = true;
@@ -231,11 +257,18 @@ class _StudioHomeState extends State<StudioHome> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     unawaited(AppLog.record('app_${state.name}'));
-    if (state == AppLifecycleState.resumed) checkUpdates();
+    if (state == AppLifecycleState.resumed) {
+      checkUpdates();
+      refreshGifStatus();
+    } else {
+      gifAvailabilityPoll?.cancel();
+      gifAvailabilityPoll = null;
+    }
   }
 
   @override
   void dispose() {
+    gifAvailabilityPoll?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -274,6 +307,7 @@ class _StudioHomeState extends State<StudioHome> with WidgetsBindingObserver {
         toast(context, widget.store.storageWarning!);
       }
       checkUpdates();
+      if (mounted) refreshGifStatus();
     });
   }
 

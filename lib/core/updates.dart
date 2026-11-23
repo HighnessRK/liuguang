@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -13,7 +14,8 @@ const releaseNotes = '''新增：表情角色管理增加云端素材库，跟�
 修复：创作助手上传、输入和发送垂直居中对齐，图片分析随对话发送。
 优化：取消界面淡入淡出，缩短作品进出和页面动效，调整导航拖拽、按压及弹层。
 优化：设置按用途分组，加入设置搜索和浅色、深色预览，保留琉光主题氛围。
-优化：升级材质效果图，统一使用简体中文引导对话及识图回复。''';
+优化：升级材质效果图，统一使用简体中文引导对话及识图回复。
+优化：GIF 生成测试期间暂不可用，已有动图仍可查看和分享。''';
 const releaseNotesV112 = '''优化：创作和作品分类切换加入震动，作品进出复用缩略图，延长隐藏空间下拉行程并重做多选栏。
 修复：异常日志可点开查看，GIF 表情包校验失败同步记入使用明细，修复 Android 后台更新闪退。''';
 const releaseNotesV111 = '''修复：作品长按和多选保持滚动位置，表情包生成后打开新作品详情。
@@ -275,7 +277,10 @@ class UpdateService {
     bool? notify,
     bool requestPermission = false,
   }) async {
-    if (source != null) await store.prefs.setString('update_source', source);
+    if (source != null && source != this.source) {
+      await store.prefs.setString('update_source', source);
+      unawaited(store.refreshGifAvailability());
+    }
     if (auto != null) await store.prefs.setBool('update_auto', auto);
     if (notify != null) await store.prefs.setBool('update_notify', notify);
     if (Platform.isAndroid) {

@@ -7,6 +7,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'gif_availability.dart';
 import 'models.dart';
 import 'updates.dart';
 
@@ -54,8 +55,40 @@ class AppStore extends ChangeNotifier {
   String? storageWarning;
   Future<void> Function(bool kill)? memoryCheckpoint;
   Future<void> _saveQueue = Future.value();
-  AppStore({FlutterSecureStorage? secure})
-    : secure = secure ?? const FlutterSecureStorage();
+  AppStore({
+    FlutterSecureStorage? secure,
+    Future<bool> Function(String)? readGifAvailability,
+  }) : secure = secure ?? const FlutterSecureStorage(),
+       _readGifAvailability = readGifAvailability ?? fetchGifAvailability;
+
+  final Future<bool> Function(String) _readGifAvailability;
+  bool _gifEnabled = false;
+  bool get gifEnabled => _gifEnabled;
+  String? _gifCheckSource, _lastGifSource;
+  int _gifCheck = 0;
+
+  Future<void> refreshGifAvailability() async {
+    final source = prefs.getString('update_source') ?? 'gitee';
+    if (_gifCheckSource == source) return;
+    if (_lastGifSource != source && _gifEnabled) {
+      _gifEnabled = false;
+      notifyListeners();
+    }
+    _lastGifSource = _gifCheckSource = source;
+    final check = ++_gifCheck;
+    var enabled = false;
+    try {
+      enabled = await _readGifAvailability(source);
+    } catch (_) {
+      // A failed fetch leaves creation unavailable.
+    }
+    if (check != _gifCheck) return;
+    _gifCheckSource = null;
+    if (_gifEnabled != enabled) {
+      _gifEnabled = enabled;
+      notifyListeners();
+    }
+  }
 
   Future<void> init() async {
     prefs = await SharedPreferences.getInstance();

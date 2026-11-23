@@ -176,9 +176,10 @@ void main() {
     await File(fixture).writeAsBytes(
       image.encodePng(image.Image(width: 96, height: 64, numChannels: 4)),
     );
-    store = AppStore()
+    store = AppStore(readGifAvailability: (_) async => true)
       ..prefs = await SharedPreferences.getInstance()
       ..directory = dir;
+    await store.refreshGifAvailability();
   });
   tearDown(() async {
     await dir.delete(recursive: true);
