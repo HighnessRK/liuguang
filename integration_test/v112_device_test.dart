@@ -182,7 +182,7 @@ void main() {
         await tester.pumpAndSettle();
         await tester.tap(animatedMode);
         await tester.pump(const Duration(milliseconds: 240));
-        expect(find.text('GIF 生成测试中，暂不支持使用'), findsOneWidget);
+        expect(find.text('GIF生成测试中，暂不支持使用'), findsOneWidget);
         expect(fixture.imageCalls, 0);
         allowGif = true;
         await store.refreshGifAvailability();

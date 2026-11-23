@@ -329,7 +329,8 @@ class _VersionLogState extends State<VersionLog> {
   Widget build(BuildContext context) => Column(
     children: [
       for (final entry in [
-        (appVersion, releaseNotes, '2026-11-23'),
+        (appVersion, releaseNotes, '2026-11-24'),
+        ('1.1.3', releaseNotesV113, '2026-11-23'),
         ('1.1.2', releaseNotesV112, '2026-11-23'),
         ('1.1.1', releaseNotesV111, '2026-11-23'),
         ('1.1.0', releaseNotesV110, '2026-11-19'),

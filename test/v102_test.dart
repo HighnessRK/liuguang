@@ -212,7 +212,9 @@ void main() {
         220,
         scrollable: find.byType(Scrollable).first,
       );
-      await tester.tap(find.text('青屿潮汐'));
+      await tester.ensureVisible(find.text('青屿潮汐'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('青屿潮汐').hitTestable());
       await tester.pumpAndSettle();
       expect(store.palette, 'lagoon');
       expect(store.accent, paletteById('lagoon').primary);

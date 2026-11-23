@@ -8,7 +8,7 @@ class StudioEditable extends StatelessWidget {
   final TextEditingController controller;
   final String hint;
   final int minLines, maxLines;
-  final bool obscure, readOnly;
+  final bool obscure, readOnly, transparent;
   final TextInputType? keyboard;
   final ValueChanged<String>? onChanged;
   final Widget? suffix;
@@ -20,6 +20,7 @@ class StudioEditable extends StatelessWidget {
     this.maxLines = 1,
     this.obscure = false,
     this.readOnly = false,
+    this.transparent = false,
     this.keyboard,
     this.onChanged,
     this.suffix,
@@ -54,7 +55,7 @@ class StudioEditable extends StatelessWidget {
           fontSize: 16,
           color: c.onSurfaceVariantSummary.withValues(alpha: .7),
         ),
-        filled: true,
+        filled: !transparent,
         fillColor: c.surfaceContainer,
         contentPadding: const EdgeInsets.symmetric(
           horizontal: 16,

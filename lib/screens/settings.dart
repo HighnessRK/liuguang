@@ -230,15 +230,20 @@ class SettingsPanel extends StatelessWidget {
   final Widget child;
   final EdgeInsetsGeometry padding;
   @override
-  Widget build(BuildContext context) => DecoratedBox(
-    decoration: BoxDecoration(
-      borderRadius: BorderRadius.circular(22),
-      color: isDark(context)
-          ? const Color(0xff202229)
-          : const Color(0xfffcfcfd),
-    ),
-    child: Padding(padding: padding, child: child),
-  );
+  Widget build(BuildContext context) {
+    if (StudioScope.of(context).advancedMaterials) {
+      return Glass(radius: 22, padding: padding, child: child);
+    }
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(22),
+        color: isDark(context)
+            ? const Color(0xff202229)
+            : const Color(0xfffcfcfd),
+      ),
+      child: Padding(padding: padding, child: child),
+    );
+  }
 }
 
 Widget _line(BuildContext context) =>
@@ -325,6 +330,57 @@ class AppearanceSettings extends StatelessWidget {
             store.saveSettings();
           }),
         ),
+        const SizedBox(height: 12),
+        SettingsPanel(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _toggle(context, '高级材质', '应用于整个琉光界面', store.advancedMaterials, (
+                value,
+              ) {
+                store.advancedMaterials = value;
+                store.saveSettings();
+              }),
+              if (store.advancedMaterials) ...[
+                _line(context),
+                const SizedBox(height: 12),
+                GlassSegments(
+                  labels: const ['液态玻璃材质', '高斯模糊材质'],
+                  selected: store.glassMaterial.index,
+                  onChanged: (index) {
+                    store.glassMaterial = StudioMaterial.values[index];
+                    store.saveSettings();
+                  },
+                ),
+                const SizedBox(height: 12),
+                GlassSlider(
+                  label: '不透明度',
+                  value: store.glassOpacity,
+                  min: .08,
+                  max: .7,
+                  onChanged: (value) {
+                    store.glassOpacity = value;
+                    store.refresh();
+                  },
+                  onChangeEnd: (_) => store.saveSettings(),
+                ),
+                const SizedBox(height: 8),
+                GlassSlider(
+                  label: '柔化强度',
+                  value: store.blur / 24,
+                  min: 0,
+                  max: 1,
+                  onChanged: (value) {
+                    store.blur = value * 24;
+                    store.refresh();
+                  },
+                  onChangeEnd: (_) => store.saveSettings(),
+                ),
+                const SizedBox(height: 10),
+              ],
+            ],
+          ),
+        ),
         const SectionLabel('主题氛围', caption: '背景与控件一起改变'),
         LayoutBuilder(
           builder: (context, constraints) {
@@ -388,37 +444,6 @@ class AppearanceSettings extends StatelessWidget {
               ],
             );
           },
-        ),
-        const SettingsGroupLabel('玻璃材质'),
-        SettingsPanel(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            children: [
-              GlassSlider(
-                label: '不透明度',
-                value: store.glassOpacity,
-                min: .08,
-                max: .7,
-                onChanged: (v) {
-                  store.glassOpacity = v;
-                  store.refresh();
-                },
-                onChangeEnd: (_) => store.saveSettings(),
-              ),
-              const SizedBox(height: 18),
-              GlassSlider(
-                label: '柔化强度',
-                value: store.blur / 24,
-                min: 0,
-                max: 1,
-                onChanged: (v) {
-                  store.blur = v * 24;
-                  store.refresh();
-                },
-                onChangeEnd: (_) => store.saveSettings(),
-              ),
-            ],
-          ),
         ),
       ],
     );

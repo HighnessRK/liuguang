@@ -8,7 +8,6 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:liquid_glass_renderer/liquid_glass_renderer.dart' as lgr;
 
 import '../core/api.dart';
 import '../core/imaging.dart';
@@ -1195,33 +1194,30 @@ class _EditorScreenState extends State<EditorScreen>
             const SizedBox(height: 8),
             Expanded(
               child: ClipRect(
-                child: lgr.LiquidGlassLayer(
-                  settings: glassSettings(context),
-                  child: ListView(
-                    key: ValueKey(busy ? 'editor-task' : 'editor-tool-$tool'),
-                    padding: EdgeInsets.fromLTRB(
-                      24,
-                      0,
-                      24,
-                      28 + StudioTabInset.of(context),
-                    ),
-                    children: [
-                      switch (tool) {
-                        0 => adjustmentControls(),
-                        1 => balanceControls(),
-                        2 => cropControls(),
-                        3 => maskControls(),
-                        5 => portraitControls(),
-                        _ => lensControls(),
-                      },
-                      const SizedBox(height: 16),
-                      Text(
-                        '修改以副本保存，原图保留。',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(fontSize: 12, color: muted(context)),
-                      ),
-                    ],
+                child: ListView(
+                  key: ValueKey(busy ? 'editor-task' : 'editor-tool-$tool'),
+                  padding: EdgeInsets.fromLTRB(
+                    24,
+                    0,
+                    24,
+                    28 + StudioTabInset.of(context),
                   ),
+                  children: [
+                    switch (tool) {
+                      0 => adjustmentControls(),
+                      1 => balanceControls(),
+                      2 => cropControls(),
+                      3 => maskControls(),
+                      5 => portraitControls(),
+                      _ => lensControls(),
+                    },
+                    const SizedBox(height: 16),
+                    Text(
+                      '修改以副本保存，原图保留。',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 12, color: muted(context)),
+                    ),
+                  ],
                 ),
               ),
             ),

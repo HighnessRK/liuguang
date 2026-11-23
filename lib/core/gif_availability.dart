@@ -2,7 +2,7 @@ import 'dart:convert';
 
 import 'package:dio/dio.dart';
 
-const gifUnavailableMessage = 'GIF 生成测试中，暂不支持使用';
+const gifUnavailableMessage = 'GIF生成测试中，暂不支持使用';
 
 Future<bool> fetchGifAvailability(String source, {Dio? client}) async {
   final github = source == 'github';

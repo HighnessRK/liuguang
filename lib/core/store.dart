@@ -7,6 +7,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'appearance.dart';
 import 'gif_availability.dart';
 import 'models.dart';
 import 'updates.dart';
@@ -50,6 +51,8 @@ class AppStore extends ChangeNotifier {
   String palette = 'aurora';
   String launcherIcon = 'default';
   int accent = 0xff2e68cd;
+  bool advancedMaterials = false;
+  StudioMaterial glassMaterial = StudioMaterial.liquid;
   double glassOpacity = .22, blur = 12, textScale = 1;
   bool haptics = true, reduceMotion = false, highContrast = false;
   String? storageWarning;
@@ -122,6 +125,10 @@ class AppStore extends ChangeNotifier {
         palette = j['palette'] ?? 'aurora';
         launcherIcon = j['launcherIcon'] ?? 'default';
         accent = j['accent'] ?? accent;
+        advancedMaterials = j['advancedMaterials'] == true;
+        glassMaterial = j['glassMaterial'] == 'gaussian'
+            ? StudioMaterial.gaussian
+            : StudioMaterial.liquid;
         glassOpacity = (j['glassOpacity'] as num?)?.toDouble() ?? glassOpacity;
         blur = (j['blur'] as num?)?.toDouble() ?? blur;
         textScale = (j['textScale'] as num?)?.toDouble() ?? textScale;
@@ -195,6 +202,8 @@ class AppStore extends ChangeNotifier {
         'palette': palette,
         'launcherIcon': launcherIcon,
         'accent': accent,
+        'advancedMaterials': advancedMaterials,
+        'glassMaterial': glassMaterial.name,
         'glassOpacity': glassOpacity,
         'blur': blur,
         'textScale': textScale,

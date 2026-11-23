@@ -774,6 +774,9 @@ ImageProvider _artworkImage(Artwork art, int maxEdge) {
   );
 }
 
+const artworkTileCorners = BorderRadius.vertical(top: Radius.circular(22));
+const artworkDetailCorners = BorderRadius.all(Radius.circular(24));
+
 class _ArtworkHero extends StatelessWidget {
   const _ArtworkHero({
     required this.art,
@@ -808,7 +811,11 @@ class _ArtworkHero extends StatelessWidget {
                 image(_artworkImage(art, 1400), fit, fallback: base),
           )
         : base;
-    if (MediaQuery.disableAnimationsOf(context)) return content;
+    final clipped = ClipRRect(
+      borderRadius: detail ? artworkDetailCorners : artworkTileCorners,
+      child: content,
+    );
+    if (MediaQuery.disableAnimationsOf(context)) return clipped;
     return Hero(
       tag: 'artwork_${art.id}',
       flightShuttleBuilder: (context, animation, direction, from, to) {
@@ -816,9 +823,20 @@ class _ArtworkHero extends StatelessWidget {
         final fit = direction == HeroFlightDirection.push
             ? BoxFit.contain
             : BoxFit.cover;
-        return image(provider, fit);
+        return AnimatedBuilder(
+          animation: animation,
+          child: image(provider, fit),
+          builder: (_, child) => ClipRRect(
+            borderRadius: BorderRadius.lerp(
+              artworkTileCorners,
+              artworkDetailCorners,
+              animation.value.clamp(0.0, 1.0),
+            )!,
+            child: child,
+          ),
+        );
       },
-      child: content,
+      child: clipped,
     );
   }
 }
@@ -988,35 +1006,32 @@ class _ArtworkDetailState extends State<ArtworkDetail> {
                 ],
               ),
               const SizedBox(height: 22),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(27),
-                child: SizedBox(
-                  height: 380,
-                  child: InteractiveViewer(
-                    minScale: .5,
-                    maxScale: 6,
-                    child: LayoutBuilder(
-                      builder: (context, constraints) {
-                        final size = applyBoxFit(
-                          BoxFit.contain,
-                          Size(
-                            math.max(1, art.width).toDouble(),
-                            math.max(1, art.height).toDouble(),
+              SizedBox(
+                height: 380,
+                child: InteractiveViewer(
+                  minScale: .5,
+                  maxScale: 6,
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final size = applyBoxFit(
+                        BoxFit.contain,
+                        Size(
+                          math.max(1, art.width).toDouble(),
+                          math.max(1, art.height).toDouble(),
+                        ),
+                        constraints.biggest,
+                      ).destination;
+                      return Center(
+                        child: SizedBox.fromSize(
+                          size: size,
+                          child: _ArtworkHero(
+                            art: art,
+                            fit: BoxFit.contain,
+                            detail: true,
                           ),
-                          constraints.biggest,
-                        ).destination;
-                        return Center(
-                          child: SizedBox.fromSize(
-                            size: size,
-                            child: _ArtworkHero(
-                              art: art,
-                              fit: BoxFit.contain,
-                              detail: true,
-                            ),
-                          ),
-                        );
-                      },
-                    ),
+                        ),
+                      );
+                    },
                   ),
                 ),
               ),

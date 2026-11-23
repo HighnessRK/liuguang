@@ -1,3 +1,5 @@
+enum StudioMaterial { liquid, gaussian }
+
 class StudioPalette {
   final String id, name;
   final int primary;

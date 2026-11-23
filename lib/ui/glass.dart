@@ -65,7 +65,7 @@ class Glass extends StatelessWidget {
   final EdgeInsetsGeometry padding;
   final double radius, refraction;
   final Color? tint;
-  final bool blur, separateLayer;
+  final bool blur, separateLayer, liveBackdrop;
   final double? opacity;
   const Glass({
     super.key,
@@ -77,141 +77,149 @@ class Glass extends StatelessWidget {
     this.opacity,
     this.refraction = 1,
     this.separateLayer = false,
+    this.liveBackdrop = false,
   });
   @override
   Widget build(BuildContext context) {
     final store = StudioScope.of(context), dark = isDark(context);
-    final nested =
-        context
-            .dependOnInheritedWidgetOfExactType<_GlassScope>()
-            ?.insideGlass ??
-        false;
-    if (!separateLayer && !nested || GlassMotionScope.of(context)) {
-      final r = BorderRadius.circular(radius);
-      final materialShift = (store.glassOpacity - .22) * .6;
-      double surfaceAlpha(double value) =>
-          store.highContrast ? .96 : (value + materialShift).clamp(.03, .96);
-      final content = Container(
-        padding: padding,
-        decoration: BoxDecoration(
-          borderRadius: r,
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: tint != null
-                ? [
-                    tint!.withValues(
-                      alpha:
-                          opacity ?? (separateLayer ? store.glassOpacity : .3),
-                    ),
-                    tint!.withValues(
-                      alpha:
-                          opacity ?? (separateLayer ? store.glassOpacity : .2),
-                    ),
-                  ]
-                : dark
-                ? [
-                    (store.highContrast
-                            ? const Color(0xff202733)
-                            : Colors.white)
-                        .withValues(alpha: surfaceAlpha(.13)),
-                    (store.highContrast
-                            ? const Color(0xff202733)
-                            : Colors.white)
-                        .withValues(alpha: surfaceAlpha(.05)),
-                  ]
-                : [
-                    Colors.white.withValues(alpha: surfaceAlpha(.82)),
-                    Colors.white.withValues(alpha: surfaceAlpha(.52)),
-                  ],
-          ),
-          border: Border.all(
-            color: Colors.white.withValues(alpha: dark ? .14 : .85),
-          ),
-        ),
-        child: child,
-      );
-      if (store.highContrast ||
-          !blur ||
-          store.blur <= 0 ||
-          GlassMotionScope.of(context))
-        return content;
-      return ClipRRect(
-        borderRadius: r,
-        child: BackdropFilter.grouped(
-          filter: ui.ImageFilter.blur(sigmaX: store.blur, sigmaY: store.blur),
-          child: content,
-        ),
-      );
-    }
+    final material = store.advancedMaterials ? store.glassMaterial : null;
+    final liquid = material == StudioMaterial.liquid;
+    final gaussian = material == StudioMaterial.gaussian;
+    final enhanced = material != null;
+    final r = BorderRadius.circular(radius);
+    final base = dark ? const Color(0xff263349) : Colors.white;
+    final useLiveLens = liquid && liveBackdrop && !store.highContrast;
+    final shift = (store.glassOpacity - .22) * .55;
     final alpha = opacity ?? store.glassOpacity;
-    final color = tint ?? (dark ? const Color(0xff263349) : Colors.white);
-    final content = _GlassScope(
-      child: Padding(
-        padding: padding,
-        child: child is Column
-            ? lgr.LiquidGlassLayer(
-                settings: glassSettings(context),
-                child: _GlassScope(insideGlass: false, child: child),
-              )
-            : child,
-      ),
-    );
-    if (store.highContrast || !blur) {
-      return DecoratedBox(
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: store.highContrast ? .96 : alpha),
-          borderRadius: BorderRadius.circular(radius),
-          border: Border.all(
-            color: Colors.white.withValues(alpha: dark ? .12 : .65),
-          ),
-        ),
-        child: content,
-      );
-    }
-    final settings = glassSettings(context)
-        .copyWith(refractionAmount: 60 * refraction);
-    final appearance = lgr.LiquidGlassAppearance(
-      tint: color.withValues(alpha: alpha),
-      colorModel: const lgr.LiquidGlassColorModel.direct(saturation: 1.12),
-    );
-    final shape = lgr.LiquidRoundedSuperellipse(borderRadius: radius);
-    const shadows = <BoxShadow>[];
-    if (separateLayer || nested) {
-      return Stack(
-        fit: StackFit.passthrough,
-        children: [
-          Positioned.fill(
-            child: IgnorePointer(
-              child: lgr.LiquidGlass.withOwnLayer(
-                shape: shape,
-                settings: settings,
-                useBackdropGroup: true,
-                appearance: appearance,
-                shadows: shadows,
-                child: const SizedBox.expand(),
-              ),
+    double surfaceAlpha(double value) => (value + shift).clamp(.03, .96);
+    final surface = store.highContrast
+        ? [
+            (tint ?? (dark ? const Color(0xff202733) : Colors.white))
+                .withValues(alpha: .96),
+          ]
+        : tint != null
+        ? [
+            tint!.withValues(alpha: opacity ?? (separateLayer ? alpha : .30)),
+            tint!.withValues(alpha: opacity ?? (separateLayer ? alpha : .20)),
+          ]
+        : switch (material) {
+            StudioMaterial.liquid => [
+              base.withValues(alpha: surfaceAlpha(dark ? .63 : .57)),
+              base.withValues(alpha: surfaceAlpha(dark ? .35 : .25)),
+              base.withValues(alpha: surfaceAlpha(dark ? .57 : .53)),
+            ],
+            StudioMaterial.gaussian => [
+              base.withValues(alpha: surfaceAlpha(dark ? .70 : .65)),
+              base.withValues(alpha: surfaceAlpha(dark ? .64 : .58)),
+            ],
+            null =>
+              dark
+                  ? [
+                      Colors.white.withValues(alpha: surfaceAlpha(.13)),
+                      Colors.white.withValues(alpha: surfaceAlpha(.05)),
+                    ]
+                  : [
+                      Colors.white.withValues(alpha: surfaceAlpha(.82)),
+                      Colors.white.withValues(alpha: surfaceAlpha(.52)),
+                    ],
+          };
+    final body = Padding(padding: padding, child: child);
+    if (useLiveLens && ui.ImageFilter.isShaderFilterSupported) {
+      // Keep the refraction capture local to the floating bar. Do not sample
+      // the page again for the moving selection indicator inside it.
+      return lgr.LiquidGlassCapture(
+        child: lgr.LiquidGlass.withOwnLayer(
+          shape: lgr.LiquidRoundedSuperellipse(borderRadius: radius),
+          settings: glassSettings(context)
+              .copyWith(refractionAmount: 60 * refraction),
+          appearance: lgr.LiquidGlassAppearance(
+            tint: base.withValues(
+              alpha: (alpha + (dark ? .18 : .30)).clamp(.25, .8),
+            ),
+            colorModel: const lgr.LiquidGlassColorModel.direct(
+              saturation: 1.08,
             ),
           ),
-          content,
-        ],
+          child: body,
+        ),
       );
     }
-    return lgr.LiquidGlass.auto(
-      shape: shape,
-      settings: settings,
-      appearance: appearance,
-      shadows: shadows,
-      child: content,
+    final content = DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: r,
+        color: surface.length == 1 ? surface.single : null,
+        gradient: surface.length == 1
+            ? null
+            : LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: surface,
+              ),
+        border: Border.all(
+          color: Colors.white.withValues(
+            alpha: dark ? (liquid ? .24 : .14) : .85,
+          ),
+        ),
+      ),
+      child: liquid && !store.highContrast
+          ? CustomPaint(foregroundPainter: _GlassRim(radius, dark), child: body)
+          : body,
+    );
+    // Repeatable controls and moving surfaces use only their material finish.
+    // Gaussian backdrop passes share the page capture. The floating bar has
+    // its own group because it intentionally overlaps the content underneath.
+    if (!enhanced ||
+        !blur ||
+        store.highContrast ||
+        store.blur <= 0 ||
+        (!liveBackdrop &&
+            (GlassMotionScope.of(context) || separateLayer || liquid))) {
+      return content;
+    }
+    final sigma = gaussian ? store.blur.clamp(3.0, 16.0) : 9.0;
+    return ClipRRect(
+      borderRadius: r,
+      child: BackdropFilter.grouped(
+        filter: ui.ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
+        child: content,
+      ),
     );
   }
 }
 
-class _GlassScope extends InheritedWidget {
-  final bool insideGlass;
-  const _GlassScope({required super.child, this.insideGlass = true});
+class _GlassRim extends CustomPainter {
+  const _GlassRim(this.radius, this.dark);
+  final double radius;
+  final bool dark;
+
   @override
-  bool updateShouldNotify(_GlassScope old) => insideGlass != old.insideGlass;
+  void paint(Canvas canvas, Size size) {
+    if (size.isEmpty) return;
+    final bounds = Offset.zero & size;
+    final inset = bounds.deflate(1.1);
+    if (inset.isEmpty) return;
+    final rim = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2
+      ..shader = LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        stops: const [0, .38, .68, 1],
+        colors: [
+          Colors.white.withValues(alpha: dark ? .55 : .96),
+          Colors.white.withValues(alpha: .02),
+          const Color(0xff859ddb).withValues(alpha: dark ? .11 : .35),
+          Colors.white.withValues(alpha: dark ? .43 : .90),
+        ],
+      ).createShader(bounds);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(inset, Radius.circular(radius)),
+      rim,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_GlassRim old) => radius != old.radius || dark != old.dark;
 }
 
 String _buttonEvent(String label) => switch (label) {
@@ -474,17 +482,24 @@ class GlassField extends StatelessWidget {
     this.suffix,
   });
   @override
-  Widget build(BuildContext context) => StudioEditable(
-    controller: controller,
-    hint: hint,
-    minLines: minLines,
-    maxLines: maxLines,
-    obscure: obscure,
-    readOnly: readOnly,
-    keyboard: keyboard,
-    onChanged: onChanged,
-    suffix: suffix,
-  );
+  Widget build(BuildContext context) {
+    final advanced = StudioScope.of(context).advancedMaterials;
+    final field = StudioEditable(
+      transparent: advanced,
+      controller: controller,
+      hint: hint,
+      minLines: minLines,
+      maxLines: maxLines,
+      obscure: obscure,
+      readOnly: readOnly,
+      keyboard: keyboard,
+      onChanged: onChanged,
+      suffix: suffix,
+    );
+    return advanced
+        ? Glass(radius: 16, blur: false, padding: EdgeInsets.zero, child: field)
+        : field;
+  }
 }
 
 class GlassSegments extends StatelessWidget {
@@ -502,7 +517,7 @@ class GlassSegments extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final reduce = MediaQuery.disableAnimationsOf(context);
-    return ClipRRect(
+    final segments = ClipRRect(
       borderRadius: BorderRadius.circular(16),
       child: ColoredBox(
         color: ink(context).withValues(alpha: .045),
@@ -586,6 +601,14 @@ class GlassSegments extends StatelessWidget {
         ),
       ),
     );
+    return StudioScope.of(context).advancedMaterials
+        ? Glass(
+            radius: 16,
+            blur: false,
+            padding: EdgeInsets.zero,
+            child: segments,
+          )
+        : segments;
   }
 }
 
@@ -1216,6 +1239,7 @@ void toast(BuildContext context, String text) {
                           maxLines: 4,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
+                            decoration: TextDecoration.none,
                             color: ink(context),
                             fontSize: 14,
                             height: 1.45,
@@ -1357,25 +1381,23 @@ class StudioBackground extends StatelessWidget {
   final Widget child;
   const StudioBackground({super.key, required this.child});
   @override
-  Widget build(BuildContext context) => lgr.LiquidGlassCapture(
-    child: BackdropGroup(
-      child: ColoredBox(
-        color: mx.MiuixTheme.of(context).colors.surface,
-        child: Stack(
-          children: [
-            Positioned.fill(
-              child: RepaintBoundary(
-                child: CustomPaint(
-                  painter: _BackgroundPainter(
-                    isDark(context),
-                    StudioScope.of(context).palette,
-                  ),
+  Widget build(BuildContext context) => BackdropGroup(
+    child: ColoredBox(
+      color: mx.MiuixTheme.of(context).colors.surface,
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: RepaintBoundary(
+              child: CustomPaint(
+                painter: _BackgroundPainter(
+                  isDark(context),
+                  StudioScope.of(context).palette,
                 ),
               ),
             ),
-            Material(type: MaterialType.transparency, child: child),
-          ],
-        ),
+          ),
+          Material(type: MaterialType.transparency, child: child),
+        ],
       ),
     ),
   );

@@ -399,12 +399,7 @@ class _StudioHomeState extends State<StudioHome> with WidgetsBindingObserver {
                               (entry) => TickerMode(
                                 enabled: entry.key == index,
                                 child: RepaintBoundary(
-                                  child: ClipRect(
-                                    child: LiquidGlassLayer(
-                                      settings: glassSettings(context),
-                                      child: entry.value,
-                                    ),
-                                  ),
+                                  child: ClipRect(child: entry.value),
                                 ),
                               ),
                             )

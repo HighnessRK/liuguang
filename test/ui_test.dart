@@ -959,12 +959,16 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('浅色模式'), findsOneWidget);
       expect(find.text('主题氛围'), findsOneWidget);
-      await tester.scrollUntilVisible(
-        find.text('玻璃材质'),
-        300,
-        scrollable: find.byType(Scrollable).first,
-      );
+      final advanced = find
+          .descendant(
+            of: find.byType(AppearanceSettings),
+            matching: find.byType(GlassToggle),
+          )
+          .last;
+      await tester.ensureVisible(advanced);
+      await tester.tap(advanced.hitTestable());
       await tester.pumpAndSettle();
+      expect(find.text('液态玻璃材质'), findsOneWidget);
       final track = find
           .descendant(
             of: find.byType(mx.MiuixSlider).first,

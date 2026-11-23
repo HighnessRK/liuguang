@@ -110,6 +110,7 @@ class _LiquidNavigationState extends State<LiquidNavigation>
               child: Glass(
                 radius: 99,
                 separateLayer: true,
+                liveBackdrop: true,
                 opacity: isDark(context) ? .28 : .18,
                 refraction: 1.8,
                 padding: const EdgeInsets.all(4),
@@ -137,7 +138,7 @@ class _LiquidNavigationState extends State<LiquidNavigation>
                                 child: Glass(
                                   radius: 99,
                                   opacity: isDark(context) ? .32 : .36,
-                                  refraction: 2.4,
+                                  blur: false,
                                   tint: accent(context),
                                   padding: EdgeInsets.zero,
                                   child: const SizedBox.expand(),
