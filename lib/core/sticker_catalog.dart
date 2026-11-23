@@ -43,7 +43,7 @@ class StickerCatalog {
   final Directory directory;
   final Dio _dio;
   String get base => source == 'github'
-      ? 'https://raw.githubusercontent.com/HighnessRK/liuguang/main/community/stickers/'
+      ? 'https://api.github.com/repos/HighnessRK/liuguang/contents/community/stickers/'
       : 'https://gitee.com/highnesssrk/liuguang/raw/main/community/stickers/';
 
   Future<List<CloudSticker>> load({CancelToken? token}) async {
@@ -84,8 +84,9 @@ class StickerCatalog {
           h <= 0 ||
           w > 4096 ||
           h > 4096 ||
-          !ids.add(id))
+          !ids.add(id)) {
         continue;
+      }
       entries.add(CloudSticker(id, name, desc, file, sha, length, w, h));
     }
     if (entries.isEmpty && (value['characters'] as List).isNotEmpty) {
@@ -118,16 +119,23 @@ class StickerCatalog {
   }) async {
     final response = await _dio.get<ResponseBody>(
       '$base$file',
-      queryParameters: fresh
-          ? {'refresh': DateTime.now().millisecondsSinceEpoch ~/ 30000}
-          : null,
-      options: Options(responseType: ResponseType.stream),
+      queryParameters: {
+        if (source == 'github') 'ref': 'main',
+        if (fresh) 'refresh': DateTime.now().millisecondsSinceEpoch ~/ 30000,
+      },
+      options: Options(
+        responseType: ResponseType.stream,
+        headers: {
+          if (source == 'github') 'Accept': 'application/vnd.github.raw+json',
+        },
+      ),
       cancelToken: token,
     );
     final buffer = BytesBuilder(copy: false);
     await for (final part in response.data!.stream) {
-      if (part.length + buffer.length > limit)
+      if (part.length + buffer.length > limit) {
         throw StudioException('素材文件大小超出限制');
+      }
       buffer.add(part);
     }
     return buffer.takeBytes();
@@ -139,8 +147,9 @@ class StickerCatalog {
 bool _verifySticker((Uint8List, CloudSticker) job) {
   final (data, item) = job;
   if (data.length != item.length ||
-      sha256.convert(data).toString() != item.hash)
+      sha256.convert(data).toString() != item.hash) {
     return false;
+  }
   final info = img.WebPDecoder().startDecode(data);
   return info != null && info.width == item.width && info.height == item.height;
 }
